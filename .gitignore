@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Model binaries are large and environment-specific; distribute out-of-band.
+models/*.onnx
+
+# Persisted index/metadata are runtime state, not source.
+storage/faiss/*.faiss
+storage/metadata/*.json
+!storage/faiss/.gitkeep
+!storage/metadata/.gitkeep
+
+# Enrolled face photos are runtime biometric data, not source.
+images/*
+!images/.gitkeep

@@ -1,0 +1,35 @@
+services:
+  face-verification-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: face-verification-api:local
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: "production"
+      LOG_LEVEL: "INFO"
+      API_KEY_ENABLED: "true"
+      API_KEY: "${FACE_API_KEY:?Set FACE_API_KEY in your shell or a .env file before running compose}"
+      DETECTOR_MODEL_PATH: "models/det_500m.onnx"
+      RECOGNIZER_MODEL_PATH: "models/w600k_mbf.onnx"
+      FAISS_INDEX_DIR: "storage/faiss"
+      METADATA_DIR: "storage/metadata"
+      # Single worker for local testing; see docs/deployment.md for
+      # multi-worker sizing guidance in real production deployments.
+      WEB_CONCURRENCY: "1"
+    volumes:
+      # Read-only: the container should never be able to modify model files.
+      - ./models:/app/models:ro
+      # Named volume: FAISS index + metadata survive container recreation.
+      - face-verification-storage:/app/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  face-verification-storage:

@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from app.core.alignment import align_face
+from app.core.detector import Face, FaceDetector
+from app.core.embedding import FaceEmbedder
+from app.core.exceptions import LowImageQualityError, MultipleFacesDetectedError, NoFaceDetectedError
+from app.core.quality import QualityChecker, QualityResult
+
+
+@dataclass
+class FaceEmbeddingResult:
+    embedding: np.ndarray
+    detection_score: float
+    box: tuple[int, int, int, int]
+    quality: QualityResult
+
+
+class FaceRecognizer:
+    """Orchestrates detection -> quality gating -> alignment -> embedding
+    into a single 'image in, embedding out' pipeline."""
+
+    def __init__(
+        self,
+        detector: FaceDetector,
+        embedder: FaceEmbedder,
+        quality_checker: QualityChecker,
+        max_faces_to_consider: int = 5,
+    ) -> None:
+        self.detector = detector
+        self.embedder = embedder
+        self.quality_checker = quality_checker
+        self.max_faces_to_consider = max_faces_to_consider
+
+    def _select_face(self, faces: list[Face], strict_single_face: bool) -> Face:
+        if not faces:
+            raise NoFaceDetectedError("No face detected in the supplied image")
+
+        if strict_single_face and len(faces) > 1:
+            raise MultipleFacesDetectedError(
+                "Multiple faces detected; exactly one is required", face_count=len(faces)
+            )
+
+        return max(faces[: self.max_faces_to_consider], key=lambda f: f.area)
+
+    def process(self, image: np.ndarray, strict_single_face: bool = False) -> FaceEmbeddingResult:
+        faces = self.detector.detect(image)
+        face = self._select_face(faces, strict_single_face)
+
+        quality_result = self.quality_checker.evaluate(image, face.box, face.score)
+        if not quality_result.accepted:
+            raise LowImageQualityError(
+                "Face image did not pass quality checks",
+                reasons=quality_result.reasons,
+                quality_score=quality_result.quality_score,
+            )
+
+        alignment = align_face(image, face.landmarks, output_size=self.embedder.input_size[0])
+        embedding = self.embedder.embed(alignment.aligned_image)
+
+        return FaceEmbeddingResult(
+            embedding=embedding,
+            detection_score=face.score,
+            box=face.box,
+            quality=quality_result,
+        )

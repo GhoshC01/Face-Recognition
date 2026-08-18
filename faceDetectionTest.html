@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Detection & Recognition Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            max-width: 1200px;
+            width: 100%;
+            padding: 30px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 0.95em;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 900px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border: 2px solid #e9ecef;
+        }
+
+        .section h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        #videoContainer {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4/3;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #canvas {
+            display: none;
+        }
+
+        .field {
+            margin-bottom: 15px;
+        }
+
+        .field label {
+            display: block;
+            font-size: 0.9em;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .field input[type="text"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1em;
+        }
+
+        .field .hint {
+            font-size: 0.8em;
+            color: #888;
+            margin-top: 4px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            min-width: 120px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-danger {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #ee5a52;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 107, 107, 0.4);
+        }
+
+        .status {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 0.95em;
+            font-weight: 500;
+        }
+
+        .status.loading {
+            background: #fff3cd;
+            color: #856404;
+            border-left: 4px solid #ffc107;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #f5c6cb;
+        }
+
+        .results {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            border: 1px solid #dee2e6;
+        }
+
+        .result-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            border-left: 4px solid #667eea;
+            background: #f8f9fa;
+        }
+
+        .result-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .result-label {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .result-value {
+            color: #666;
+            font-size: 0.95em;
+            word-break: break-all;
+        }
+
+        .similarity {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .similarity.high {
+            background: #28a745;
+        }
+
+        .similarity.medium {
+            background: #ffc107;
+        }
+
+        .similarity.low {
+            background: #ff6b6b;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #ccc;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+            font-style: italic;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .stat {
+            background: white;
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+            border: 1px solid #dee2e6;
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #667eea;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .info-box strong {
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎥 Face Verification API - Test UI</h1>
+            <p>Enroll and identify faces against the local Face Verification API</p>
+        </div>
+
+        <div class="info-box">
+            <strong>ℹ️ How to use:</strong> Click "Start Camera". Enter an External ID and click
+            "Enroll Face" <strong>twice</strong> — the 1st click captures photo 1, then click it
+            again for photo 2 (move slightly in between); both are submitted together and the
+            server cross-checks they're the same person. Leave External ID blank and click
+            "Capture & Identify" to match the current frame against everyone enrolled (Mode A), or
+            fill it in to verify against that one identity (Mode B).
+        </div>
+
+        <div class="content">
+            <!-- Camera Section -->
+            <div class="section">
+                <h2>📹 Camera Feed</h2>
+                <div id="videoContainer">
+                    <video id="video" autoplay playsinline></video>
+                </div>
+                <canvas id="canvas"></canvas>
+                <div class="controls">
+                    <button class="btn-primary" id="startBtn" onclick="startCamera()">Start Camera</button>
+                    <button class="btn-danger" id="stopBtn" onclick="stopCamera()" style="display:none;">Stop Camera</button>
+                </div>
+            </div>
+
+            <!-- Detection Section -->
+            <div class="section">
+                <h2>🧠 Enrollment & Matching</h2>
+                <div id="status" class="status" style="display:none;"></div>
+
+                <div class="field">
+                    <label for="externalId">External ID</label>
+                    <input type="text" id="externalId" placeholder="e.g. EMP001">
+                    <div class="hint">Required for Enroll / Status / Remove. Optional for Capture &
+                        Identify — blank = identify across everyone enrolled (Mode A), filled = verify
+                        against that one identity (Mode B).</div>
+                </div>
+
+                <div class="stats">
+                    <div class="stat">
+                        <div class="stat-label">Frames Captured</div>
+                        <div class="stat-value" id="frameCount">0</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-label">Best Similarity</div>
+                        <div class="stat-value" id="bestSim">0%</div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn-primary" id="enrollBtn" onclick="enrollFace()" style="display:none;">Enroll Face</button>
+                    <button class="btn-primary" id="captureBtn" onclick="captureAndDetect()" style="display:none;">Capture & Identify</button>
+                </div>
+                <div class="controls" style="margin-top:10px;">
+                    <button class="btn-primary" id="autoBtn" onclick="toggleAutoCapture()" style="display:none;">Auto Capture (5s)</button>
+                    <button class="btn-primary" id="statusBtn" onclick="checkStatus()">Check Status</button>
+                    <button class="btn-danger" id="removeBtn" onclick="removeEnrollment()">Remove Enrollment</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="section">
+            <h2>📊 Results</h2>
+            <div id="results" class="results">
+                <div class="empty">No results yet.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // This service is versioned under /api/v1 and has no HRMS/employee
+        // concept -- see README.md. Point this at wherever `uvicorn app.main:app`
+        // is actually running.
+        const PYTHON_API = 'http://localhost:8000/api/v1';
+
+        let stream = null;
+        let frameCount = 0;
+        let bestSimilarity = 0;
+        let autoCapturingTimeout = null;
+        let isAutoCapturing = false;
+        let pendingEnrollBlob1 = null;   // first enroll photo, waiting for the second click
+
+        function resetEnrollCapture() {
+            pendingEnrollBlob1 = null;
+            document.getElementById('enrollBtn').textContent = 'Enroll Face (photo 1 of 2)';
+        }
+
+        function getExternalId() {
+            return document.getElementById('externalId').value.trim();
+        }
+
+        // Start camera
+        async function startCamera() {
+            try {
+                showStatus('Starting camera...', 'loading');
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                document.getElementById('video').srcObject = stream;
+                document.getElementById('startBtn').style.display = 'none';
+                document.getElementById('stopBtn').style.display = 'block';
+                document.getElementById('enrollBtn').style.display = 'block';
+                document.getElementById('captureBtn').style.display = 'block';
+                document.getElementById('autoBtn').style.display = 'block';
+                resetEnrollCapture();
+                showStatus('Camera started ✅', 'success');
+            } catch (err) {
+                showStatus('Camera access denied: ' + err.message, 'error');
+            }
+        }
+
+        // Stop camera
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            document.getElementById('startBtn').style.display = 'block';
+            document.getElementById('stopBtn').style.display = 'none';
+            document.getElementById('enrollBtn').style.display = 'none';
+            document.getElementById('captureBtn').style.display = 'none';
+            document.getElementById('autoBtn').style.display = 'none';
+            isAutoCapturing = false;
+            document.getElementById('autoBtn').textContent = 'Auto Capture (5s)';
+            resetEnrollCapture();
+            showStatus('Camera stopped', 'success');
+        }
+
+        // Grab the current video frame as a JPEG blob
+        function captureFrameBlob() {
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+            return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+        }
+
+        // Initial enrollment requires exactly two images of the same person
+        // (cross-validated server-side). Manual two-click capture: first click
+        // grabs photo 1 and waits; second click grabs photo 2 and submits both.
+        // POST /api/v1/faces/enroll (form: external_id, image1, image2)
+        async function enrollFace() {
+            const externalId = getExternalId();
+            if (!stream) {
+                showStatus('Please start camera first', 'error');
+                return;
+            }
+            if (!externalId) {
+                showStatus('Enter an External ID before enrolling', 'error');
+                return;
+            }
+
+            try {
+                if (!pendingEnrollBlob1) {
+                    showStatus('Capturing photo 1 of 2...', 'loading');
+                    pendingEnrollBlob1 = await captureFrameBlob();
+                    document.getElementById('enrollBtn').textContent = 'Enroll Face (photo 2 of 2 -- click again)';
+                    showStatus('Photo 1 captured ✅ -- move slightly, then click "Enroll Face" again for photo 2', 'success');
+                    return;
+                }
+
+                showStatus('Capturing photo 2 of 2...', 'loading');
+                const blob2 = await captureFrameBlob();
+                const blob1 = pendingEnrollBlob1;
+                resetEnrollCapture();
+
+                showStatus('Enrolling both photos...', 'loading');
+                const formData = new FormData();
+                formData.append('external_id', externalId);
+                formData.append('image1', blob1, 'enroll1.jpg');
+                formData.append('image2', blob2, 'enroll2.jpg');
+
+                const response = await fetch(PYTHON_API + '/faces/enroll', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(`Enrolled "${data.external_id}" from 2 photos ✅ (image similarity ${(data.image_similarity * 100).toFixed(1)}%)`, 'success');
+                    displayRaw('Enrollment', data);
+                } else {
+                    showStatus('Enrollment failed: ' + describeError(data), 'error');
+                    displayRaw('Enrollment error', data);
+                }
+            } catch (err) {
+                resetEnrollCapture();
+                showStatus('Error: ' + err.message, 'error');
+            }
+        }
+
+        // Capture frame and verify/identify
+        // POST /api/v1/faces/verify (form: file, optional external_id)
+        async function captureAndDetect() {
+            if (!stream) {
+                showStatus('Please start camera first', 'error');
+                return;
+            }
+
+            try {
+                frameCount++;
+                document.getElementById('frameCount').textContent = frameCount;
+
+                showStatus('Capturing and matching face...', 'loading');
+                const blob = await captureFrameBlob();
+                const formData = new FormData();
+                formData.append('file', blob, 'capture.jpg');
+                const externalId = getExternalId();
+                if (externalId) {
+                    formData.append('external_id', externalId);
+                }
+
+                const response = await fetch(PYTHON_API + '/faces/verify', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(data.status === 'PASS' ? 'Match ✅' : 'No match (FAIL)', data.status === 'PASS' ? 'success' : 'error');
+                    displayVerifyResult(data);
+                } else {
+                    showStatus('Error: ' + describeError(data), 'error');
+                    displayRaw('Verify error', data);
+                }
+            } catch (err) {
+                showStatus('Error: ' + err.message, 'error');
+                console.error(err);
+            }
+        }
+
+        // Toggle auto capture
+        function toggleAutoCapture() {
+            if (isAutoCapturing) {
+                isAutoCapturing = false;
+                clearTimeout(autoCapturingTimeout);
+                document.getElementById('autoBtn').textContent = 'Auto Capture (5s)';
+                showStatus('Auto capture stopped', 'success');
+            } else {
+                isAutoCapturing = true;
+                document.getElementById('autoBtn').textContent = 'Stop Auto Capture';
+                showStatus('Auto capture started - will capture every 5 seconds', 'loading');
+                autoCaptureInterval();
+            }
+        }
+
+        function autoCaptureInterval() {
+            if (isAutoCapturing) {
+                captureAndDetect();
+                autoCapturingTimeout = setTimeout(autoCaptureInterval, 5000);
+            }
+        }
+
+        // GET /api/v1/enrollment/{external_id}
+        async function checkStatus() {
+            const externalId = getExternalId();
+            if (!externalId) {
+                showStatus('Enter an External ID first', 'error');
+                return;
+            }
+            try {
+                showStatus('Checking enrollment status...', 'loading');
+                const response = await fetch(PYTHON_API + '/enrollment/' + encodeURIComponent(externalId));
+                const data = await response.json();
+                if (response.ok) {
+                    showStatus(`"${data.external_id}": ${data.enrolled ? data.embedding_count + ' embedding(s) enrolled' : 'not enrolled'}`, 'success');
+                    displayRaw('Enrollment status', data);
+                } else {
+                    showStatus('Status check failed: ' + describeError(data), 'error');
+                    displayRaw('Status error', data);
+                }
+            } catch (err) {
+                showStatus('Error: ' + err.message, 'error');
+            }
+        }
+
+        // DELETE /api/v1/enrollment/{external_id}
+        async function removeEnrollment() {
+            const externalId = getExternalId();
+            if (!externalId) {
+                showStatus('Enter an External ID first', 'error');
+                return;
+            }
+            try {
+                showStatus('Removing enrollment...', 'loading');
+                const response = await fetch(PYTHON_API + '/enrollment/' + encodeURIComponent(externalId), {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showStatus(`Removed ${data.embeddings_removed} embedding(s) for "${data.external_id}"`, 'success');
+                    displayRaw('Enrollment removed', data);
+                } else {
+                    showStatus('Remove failed: ' + describeError(data), 'error');
+                    displayRaw('Remove error', data);
+                }
+            } catch (err) {
+                showStatus('Error: ' + err.message, 'error');
+            }
+        }
+
+        function describeError(data) {
+            // Domain errors from this API come back as {error_code, message, request_id, details, timestamp}
+            return data.message || data.detail || data.error_code || 'Unknown error';
+        }
+
+        function displayVerifyResult(data) {
+            const similarityPct = (data.similarity * 100).toFixed(1);
+            const thresholdPct = (data.threshold * 100).toFixed(1);
+
+            if (similarityPct > bestSimilarity) {
+                bestSimilarity = similarityPct;
+                document.getElementById('bestSim').textContent = similarityPct + '%';
+            }
+
+            let simClass = 'low';
+            if (data.status === 'PASS') simClass = 'high';
+            else if (similarityPct >= thresholdPct * 0.7) simClass = 'medium';
+
+            const resultsHtml = `
+                <div class="results">
+                    <div class="result-item" style="${data.status === 'PASS' ? '' : 'border-left-color:red'}">
+                        <div class="result-label">${data.status === 'PASS' ? '✅ PASS' : '❌ FAIL'} (${data.mode})</div>
+                        <div class="result-value">
+                            <strong>External ID:</strong> ${data.external_id || '(none)'}<br>
+                            <strong>Similarity:</strong>
+                            <span class="similarity ${simClass}">${similarityPct}%</span>
+                            (threshold ${thresholdPct}%)<br>
+                            <strong>Detection score:</strong> ${data.detection_score}<br>
+                            <strong>Quality accepted:</strong> ${data.quality.accepted}
+                            ${data.quality.reasons && data.quality.reasons.length ? ' (' + data.quality.reasons.join(', ') + ')' : ''}<br>
+                            <strong>Time:</strong> ${new Date().toLocaleTimeString()}
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('results').innerHTML = resultsHtml;
+        }
+
+        function displayRaw(label, data) {
+            const resultsHtml = `
+                <div class="results">
+                    <div class="result-item">
+                        <div class="result-label">${label}</div>
+                        <div class="result-value"><pre style="white-space:pre-wrap;margin:0;">${JSON.stringify(data, null, 2)}</pre></div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('results').innerHTML = resultsHtml;
+        }
+
+        // Show status message
+        function showStatus(message, type = 'loading') {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status ' + type;
+            statusEl.innerHTML = type === 'loading'
+                ? '<span class="loading-spinner"></span>' + message
+                : message;
+            statusEl.style.display = 'block';
+        }
+
+        // Initialize
+        console.log('Face Detection Test UI Loaded');
+        showStatus('Ready! Click "Start Camera" to begin', 'success');
+    </script>
+</body>
+</html>
