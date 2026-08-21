@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
 from app.api.deps import get_enrollment_service, get_settings, get_verification_service, require_api_key
@@ -11,6 +13,9 @@ from app.schemas.verification import FaceVerificationResponse, MultiFrameVerific
 from app.services.enrollment_service import EnrollmentService
 from app.services.verification_service import VerificationService
 from app.utils.image_utils import decode_image_bytes
+from app.utils.timing import Stopwatch
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/faces", tags=["faces"], dependencies=[Depends(require_api_key)])
 
@@ -26,9 +31,17 @@ async def enroll_faces(
     """Initial enrollment workflow: exactly two images of the same person.
     Each image must contain exactly one detectable face and pass quality
     checks; the two images must be mutually consistent (same person)."""
+    sw = Stopwatch()
     img1 = decode_image_bytes(await read_validated_upload(image1, settings))
     img2 = decode_image_bytes(await read_validated_upload(image2, settings))
-    return service.enroll_pair(external_id, img1, img2)
+    receive_ms = sw.lap_ms()
+    try:
+        return service.enroll_pair(external_id, img1, img2)
+    finally:
+        logger.info(
+            "enroll_route_timings",
+            extra={"external_id": external_id, "receive_ms": receive_ms, "route_total_ms": sw.lap_ms() + receive_ms},
+        )
 
 
 @router.post("/verify", response_model=FaceVerificationResponse)
@@ -48,8 +61,16 @@ async def verify_face(
     """The main face verification endpoint HRMS calls. Requires exactly one
     detectable face in the image; never marks attendance or touches HRMS data
     -- it only returns PASS/FAIL plus the similarity/threshold behind it."""
+    sw = Stopwatch()
     image = decode_image_bytes(await read_validated_upload(file, settings))
-    return service.verify_or_identify(image, external_id=external_id)
+    receive_ms = sw.lap_ms()
+    try:
+        return service.verify_or_identify(image, external_id=external_id)
+    finally:
+        logger.info(
+            "verify_route_timings",
+            extra={"external_id": external_id, "receive_ms": receive_ms, "route_total_ms": sw.lap_ms() + receive_ms},
+        )
 
 
 @router.post("/verify-multi", response_model=MultiFrameVerificationResponse)

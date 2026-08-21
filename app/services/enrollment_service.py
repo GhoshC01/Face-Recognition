@@ -17,6 +17,7 @@ from app.schemas.enrollment import (
     EnrollmentResponse,
     EnrollmentStatusResponse,
 )
+from app.utils.timing import Stopwatch
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ class EnrollmentService:
         FAISS write failing after the first succeeded), which is covered by
         an explicit rollback below.
         """
+        sw = Stopwatch()
         is_duplicate = self.vector_store.has_identity(external_id)
         if is_duplicate and self.duplicate_policy == "reject":
             raise IdentityAlreadyExistsError(
@@ -95,7 +97,9 @@ class EnrollmentService:
             )
 
         result1 = self.recognizer.process(image1, strict_single_face=True)
+        image1_ms = sw.lap_ms()
         result2 = self.recognizer.process(image2, strict_single_face=True)
+        image2_ms = sw.lap_ms()
 
         image_similarity = float(np.dot(result1.embedding, result2.embedding))
         if image_similarity < self.min_image_similarity:
@@ -123,8 +127,23 @@ class EnrollmentService:
             )
             raise
 
+        storage_ms = sw.lap_ms()
+
         self._save_image(external_id, embedding_id_1, image1)
         self._save_image(external_id, embedding_id_2, image2)
+        image_save_ms = sw.lap_ms()
+
+        logger.info(
+            "enroll_pair_stage_timings",
+            extra={
+                "external_id": external_id,
+                "image1_recognize_ms": image1_ms,
+                "image2_recognize_ms": image2_ms,
+                "vector_store_write_ms": storage_ms,
+                "image_save_ms": image_save_ms,
+                "total_ms": round(image1_ms + image2_ms + storage_ms + image_save_ms, 2),
+            },
+        )
 
         return DualImageEnrollmentResponse(
             external_id=external_id,

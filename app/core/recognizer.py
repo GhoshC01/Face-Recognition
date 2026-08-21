@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -9,6 +10,9 @@ from app.core.detector import Face, FaceDetector
 from app.core.embedding import FaceEmbedder
 from app.core.exceptions import LowImageQualityError, MultipleFacesDetectedError, NoFaceDetectedError
 from app.core.quality import QualityChecker, QualityResult
+from app.utils.timing import Stopwatch
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -47,10 +51,14 @@ class FaceRecognizer:
         return max(faces[: self.max_faces_to_consider], key=lambda f: f.area)
 
     def process(self, image: np.ndarray, strict_single_face: bool = False) -> FaceEmbeddingResult:
+        sw = Stopwatch()
         faces = self.detector.detect(image)
+        detect_ms = sw.lap_ms()
+
         face = self._select_face(faces, strict_single_face)
 
         quality_result = self.quality_checker.evaluate(image, face.box, face.score)
+        quality_ms = sw.lap_ms()
         if not quality_result.accepted:
             raise LowImageQualityError(
                 "Face image did not pass quality checks",
@@ -59,7 +67,21 @@ class FaceRecognizer:
             )
 
         alignment = align_face(image, face.landmarks, output_size=self.embedder.input_size[0])
+        align_ms = sw.lap_ms()
         embedding = self.embedder.embed(alignment.aligned_image)
+        embed_ms = sw.lap_ms()
+
+        logger.info(
+            "recognizer_stage_timings",
+            extra={
+                "detect_ms": detect_ms,
+                "quality_ms": quality_ms,
+                "align_ms": align_ms,
+                "embed_ms": embed_ms,
+                "total_ms": round(detect_ms + quality_ms + align_ms + embed_ms, 2),
+                "faces_detected": len(faces),
+            },
+        )
 
         return FaceEmbeddingResult(
             embedding=embedding,

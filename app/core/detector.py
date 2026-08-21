@@ -9,6 +9,7 @@ import numpy as np
 import onnxruntime as ort
 
 from app.core.exceptions import InvalidImageError, ModelNotReadyError
+from app.utils.timing import Stopwatch
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,7 @@ class FaceDetector:
         if not path.is_file():
             raise FileNotFoundError(f"Detector model not found at '{path}'")
 
+        sw = Stopwatch()
         options = ort.SessionOptions()
         if self._intra_op_threads:
             options.intra_op_num_threads = self._intra_op_threads
@@ -123,7 +125,10 @@ class FaceDetector:
         )
         num_outputs = len(self._session.get_outputs())
         self._use_kps = num_outputs == 9
-        logger.info("detector_loaded", extra={"model_path": str(path), "num_outputs": num_outputs})
+        logger.info(
+            "detector_loaded",
+            extra={"model_path": str(path), "num_outputs": num_outputs, "load_ms": sw.lap_ms()},
+        )
 
     def _preprocess(self, image: np.ndarray) -> tuple[np.ndarray, float]:
         img_h, img_w = image.shape[:2]
@@ -183,6 +188,7 @@ class FaceDetector:
         self._validate_image(image)
 
         if self._session is None:
+            logger.warning("detector_lazy_load_triggered_by_request")
             try:
                 self.load()
             except FileNotFoundError as exc:

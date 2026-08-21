@@ -9,6 +9,7 @@ import onnxruntime as ort
 
 from app.core.exceptions import InvalidImageError, ModelNotReadyError
 from app.core.normalization import l2_normalize
+from app.utils.timing import Stopwatch
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class FaceEmbedder:
         if not path.is_file():
             raise FileNotFoundError(f"Recognizer model not found at '{path}'")
 
+        sw = Stopwatch()
         options = ort.SessionOptions()
         if self._intra_op_threads:
             options.intra_op_num_threads = self._intra_op_threads
@@ -97,7 +99,7 @@ class FaceEmbedder:
         self._embedding_dimension = dimension
         logger.info(
             "recognizer_loaded",
-            extra={"model_path": str(path), "embedding_dimension": dimension},
+            extra={"model_path": str(path), "embedding_dimension": dimension, "load_ms": sw.lap_ms()},
         )
 
     @staticmethod
@@ -113,6 +115,7 @@ class FaceEmbedder:
         self._validate_aligned_face(aligned_face)
 
         if self._session is None:
+            logger.warning("embedder_lazy_load_triggered_by_request")
             try:
                 self.load()
             except FileNotFoundError as exc:

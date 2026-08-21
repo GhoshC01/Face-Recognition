@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,6 +24,9 @@ from app.schemas.verification import (
     MultiFrameVerificationResponse,
     VerificationResponse,
 )
+from app.utils.timing import Stopwatch
+
+logger = logging.getLogger(__name__)
 
 # Domain errors that mean "this particular frame is unusable" rather than
 # "the whole request is invalid" -- caught per-frame in verify_multi_frame so
@@ -105,7 +109,9 @@ class VerificationService:
         modes, a similarity below threshold is always FAIL -- the closest
         available candidate is never forced to PASS.
         """
+        sw = Stopwatch()
         result = self.recognizer.process(image, strict_single_face=True)
+        recognize_ms = sw.lap_ms()
 
         if external_id is not None:
             enrolled_embeddings = self.vector_store.get_embeddings(external_id)
@@ -114,6 +120,17 @@ class VerificationService:
 
             similarity = max(float(np.dot(result.embedding, stored)) for stored in enrolled_embeddings)
             verified = similarity >= self.verification_threshold
+            match_ms = sw.lap_ms()
+
+            logger.info(
+                "verify_stage_timings",
+                extra={
+                    "mode": "verification",
+                    "recognize_ms": recognize_ms,
+                    "match_ms": match_ms,
+                    "total_ms": round(recognize_ms + match_ms, 2),
+                },
+            )
 
             return FaceVerificationResponse(
                 verified=verified,
@@ -127,9 +144,20 @@ class VerificationService:
             )
 
         candidates = self.vector_store.search(result.embedding, top_k=1)
+        match_ms = sw.lap_ms()
         best = candidates[0] if candidates else None
         similarity = best.similarity_score if best is not None else 0.0
         verified = best is not None and similarity >= self.identification_threshold
+
+        logger.info(
+            "verify_stage_timings",
+            extra={
+                "mode": "identification",
+                "recognize_ms": recognize_ms,
+                "match_ms": match_ms,
+                "total_ms": round(recognize_ms + match_ms, 2),
+            },
+        )
 
         return FaceVerificationResponse(
             verified=verified,
