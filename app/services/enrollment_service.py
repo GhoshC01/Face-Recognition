@@ -6,13 +6,11 @@ import os
 import cv2
 import numpy as np
 
-from app.core.exceptions import IdentityAlreadyExistsError, IdentityNotFoundError, InconsistentEnrollmentImagesError
+from app.core.exceptions import IdentityAlreadyExistsError, IdentityNotFoundError
 from app.core.recognizer import FaceRecognizer
 from app.core.vector_store import VectorStore
 from app.schemas.common import quality_result_to_schema
 from app.schemas.enrollment import (
-    DualImageEnrollmentResponse,
-    EnrolledImageInfo,
     EnrollmentDeleteResponse,
     EnrollmentResponse,
     EnrollmentStatusResponse,
@@ -34,13 +32,11 @@ class EnrollmentService:
         recognizer: FaceRecognizer,
         vector_store: VectorStore,
         duplicate_policy: str = "reject",
-        min_image_similarity: float = 0.40,
         images_dir: str | None = None,
     ) -> None:
         self.recognizer = recognizer
         self.vector_store = vector_store
         self.duplicate_policy = duplicate_policy
-        self.min_image_similarity = min_image_similarity
         # Opt-in: unset (the default here) preserves the old embeddings-only
         # behavior relied on by existing callers/tests. app/main.py wires this
         # from settings.enrollment_images_dir for the running service.
@@ -79,15 +75,11 @@ class EnrollmentService:
             quality=quality_result_to_schema(result.quality),
         )
 
-    def enroll_pair(self, external_id: str, image1, image2) -> DualImageEnrollmentResponse:
-        """Initial enrollment workflow: exactly two images of the same person,
-        each required to contain exactly one face. Nothing is written to the
-        vector store until both images are fully validated (detected, quality
-        gated, and cross-checked for consistency with each other) — so a
-        rejected image never leaves a partial enrollment behind. The only
-        remaining failure window is the storage step itself (e.g. the second
-        FAISS write failing after the first succeeded), which is covered by
-        an explicit rollback below.
+    def enroll_initial(self, external_id: str, image) -> EnrollmentResponse:
+        """Initial enrollment workflow: a single image of the person, required
+        to contain exactly one face and pass quality checks. Nothing is
+        written to the vector store until the image is fully validated -- so
+        a rejected image never leaves a partial enrollment behind.
         """
         sw = Stopwatch()
         is_duplicate = self.vector_store.has_identity(external_id)
@@ -96,73 +88,39 @@ class EnrollmentService:
                 f"external_id='{external_id}' is already enrolled; re-enrollment is disabled by policy"
             )
 
-        result1 = self.recognizer.process(image1, strict_single_face=True)
-        image1_ms = sw.lap_ms()
-        result2 = self.recognizer.process(image2, strict_single_face=True)
-        image2_ms = sw.lap_ms()
+        result = self.recognizer.process(image, strict_single_face=True)
+        recognize_ms = sw.lap_ms()
 
-        image_similarity = float(np.dot(result1.embedding, result2.embedding))
-        if image_similarity < self.min_image_similarity:
-            raise InconsistentEnrollmentImagesError(
-                "The two enrollment images do not appear to show the same person",
-                similarity_score=image_similarity,
-                threshold=self.min_image_similarity,
-            )
-
-        # Both images are known-good and mutually consistent -- only now do we
-        # touch stored state. Under the "replace" policy, the previous
-        # enrollment is cleared here (not earlier), so a rejected pair never
-        # destroys a still-valid prior enrollment.
+        # The image is known-good -- only now do we touch stored state. Under
+        # the "replace" policy, the previous enrollment is cleared here (not
+        # earlier), so a rejected image never destroys a still-valid prior
+        # enrollment.
         if is_duplicate:
             self.vector_store.remove_embedding(external_id)
 
-        embedding_id_1 = self.vector_store.add_embedding(external_id, result1.embedding)
-        try:
-            embedding_id_2 = self.vector_store.add_embedding(external_id, result2.embedding)
-        except Exception:
-            self.vector_store.remove_embedding(external_id)
-            logger.warning(
-                "enrollment_rolled_back",
-                extra={"external_id": external_id, "reason": "second_image_storage_failed"},
-            )
-            raise
-
+        embedding_id = self.vector_store.add_embedding(external_id, result.embedding)
         storage_ms = sw.lap_ms()
 
-        self._save_image(external_id, embedding_id_1, image1)
-        self._save_image(external_id, embedding_id_2, image2)
+        self._save_image(external_id, embedding_id, image)
         image_save_ms = sw.lap_ms()
 
         logger.info(
-            "enroll_pair_stage_timings",
+            "enroll_initial_stage_timings",
             extra={
                 "external_id": external_id,
-                "image1_recognize_ms": image1_ms,
-                "image2_recognize_ms": image2_ms,
+                "recognize_ms": recognize_ms,
                 "vector_store_write_ms": storage_ms,
                 "image_save_ms": image_save_ms,
-                "total_ms": round(image1_ms + image2_ms + storage_ms + image_save_ms, 2),
+                "total_ms": round(recognize_ms + storage_ms + image_save_ms, 2),
             },
         )
 
-        return DualImageEnrollmentResponse(
+        return EnrollmentResponse(
             external_id=external_id,
-            images_processed=2,
-            image_similarity=image_similarity,
-            images=[
-                EnrolledImageInfo(
-                    image="image1",
-                    embedding_id=embedding_id_1,
-                    detection_score=result1.detection_score,
-                    quality=quality_result_to_schema(result1.quality),
-                ),
-                EnrolledImageInfo(
-                    image="image2",
-                    embedding_id=embedding_id_2,
-                    detection_score=result2.detection_score,
-                    quality=quality_result_to_schema(result2.quality),
-                ),
-            ],
+            enrolled=True,
+            embedding_id=embedding_id,
+            detection_score=result.detection_score,
+            quality=quality_result_to_schema(result.quality),
         )
 
     def status(self, external_id: str) -> EnrollmentStatusResponse:

@@ -59,24 +59,20 @@ def test_faces_enroll_without_models_returns_service_unavailable(client):
     response = client.post(
         "/api/v1/faces/enroll",
         data={"external_id": "EMP001"},
-        files={
-            "image1": ("a.png", png_bytes, "image/png"),
-            "image2": ("b.png", png_bytes, "image/png"),
-        },
+        files={"image": ("a.png", png_bytes, "image/png")},
     )
 
     assert response.status_code == 503
     assert response.json()["error_code"] == "model_not_ready"
 
 
-def test_faces_enroll_requires_both_images(client):
+def test_faces_enroll_requires_image(client):
     response = client.post(
         "/api/v1/faces/enroll",
         data={"external_id": "EMP001"},
-        files={"image1": ("a.png", b"not-an-image", "image/png")},
     )
 
-    assert response.status_code == 422  # FastAPI request validation: image2 is required
+    assert response.status_code == 422  # FastAPI request validation: image is required
 
 
 def test_faces_verify_multi_without_models_returns_service_unavailable(client):

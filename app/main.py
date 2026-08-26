@@ -107,7 +107,6 @@ async def lifespan(app: FastAPI):
         recognizer=recognizer,
         vector_store=vector_store,
         duplicate_policy=settings.enrollment_duplicate_policy,
-        min_image_similarity=settings.enrollment_min_image_similarity,
         images_dir=settings.enrollment_images_dir,
     )
     app.state.verification_service = VerificationService(

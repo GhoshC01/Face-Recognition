@@ -48,14 +48,6 @@ class ModelNotReadyError(FaceServiceError):
     http_status = 503
 
 
-class InconsistentEnrollmentImagesError(FaceServiceError):
-    """Raised when two enrollment images do not appear to be the same person
-    (embedding similarity below the configured consistency threshold)."""
-
-    error_code = "inconsistent_enrollment_images"
-    http_status = 422
-
-
 class InvalidFrameCountError(FaceServiceError):
     """Raised when a multi-frame verification request submits fewer or more
     frames than the configured allowed range."""

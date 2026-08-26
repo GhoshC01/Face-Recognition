@@ -8,7 +8,7 @@ from app.api.deps import get_enrollment_service, get_settings, get_verification_
 from app.api.upload_validation import read_validated_upload
 from app.config.settings import Settings
 from app.core.exceptions import FaceServiceError
-from app.schemas.enrollment import DualImageEnrollmentResponse
+from app.schemas.enrollment import EnrollmentResponse
 from app.schemas.verification import FaceVerificationResponse, MultiFrameVerificationResponse
 from app.services.enrollment_service import EnrollmentService
 from app.services.verification_service import VerificationService
@@ -20,23 +20,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/faces", tags=["faces"], dependencies=[Depends(require_api_key)])
 
 
-@router.post("/enroll", response_model=DualImageEnrollmentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/enroll", response_model=EnrollmentResponse, status_code=status.HTTP_201_CREATED)
 async def enroll_faces(
     external_id: str = Form(..., description="Opaque identity key supplied by the calling system, e.g. an HRMS employee ID"),
-    image1: UploadFile = File(...),
-    image2: UploadFile = File(...),
+    image: UploadFile = File(...),
     settings: Settings = Depends(get_settings),
     service: EnrollmentService = Depends(get_enrollment_service),
-) -> DualImageEnrollmentResponse:
-    """Initial enrollment workflow: exactly two images of the same person.
-    Each image must contain exactly one detectable face and pass quality
-    checks; the two images must be mutually consistent (same person)."""
+) -> EnrollmentResponse:
+    """Initial enrollment workflow: a single image of the person. The image
+    must contain exactly one detectable face and pass quality checks."""
     sw = Stopwatch()
-    img1 = decode_image_bytes(await read_validated_upload(image1, settings))
-    img2 = decode_image_bytes(await read_validated_upload(image2, settings))
+    img = decode_image_bytes(await read_validated_upload(image, settings))
     receive_ms = sw.lap_ms()
     try:
-        return service.enroll_pair(external_id, img1, img2)
+        return service.enroll_initial(external_id, img)
     finally:
         logger.info(
             "enroll_route_timings",

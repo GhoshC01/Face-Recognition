@@ -318,9 +318,7 @@
 
         <div class="info-box">
             <strong>ℹ️ How to use:</strong> Click "Start Camera". Enter an External ID and click
-            "Enroll Face" <strong>twice</strong> — the 1st click captures photo 1, then click it
-            again for photo 2 (move slightly in between); both are submitted together and the
-            server cross-checks they're the same person. Leave External ID blank and click
+            "Enroll Face" to capture and submit one photo. Leave External ID blank and click
             "Capture & Identify" to match the current frame against everyone enrolled (Mode A), or
             fill it in to verify against that one identity (Mode B).
         </div>
@@ -395,13 +393,6 @@
         let bestSimilarity = 0;
         let autoCapturingTimeout = null;
         let isAutoCapturing = false;
-        let pendingEnrollBlob1 = null;   // first enroll photo, waiting for the second click
-
-        function resetEnrollCapture() {
-            pendingEnrollBlob1 = null;
-            document.getElementById('enrollBtn').textContent = 'Enroll Face (photo 1 of 2)';
-        }
-
         function getExternalId() {
             return document.getElementById('externalId').value.trim();
         }
@@ -419,7 +410,6 @@
                 document.getElementById('enrollBtn').style.display = 'block';
                 document.getElementById('captureBtn').style.display = 'block';
                 document.getElementById('autoBtn').style.display = 'block';
-                resetEnrollCapture();
                 showStatus('Camera started ✅', 'success');
             } catch (err) {
                 showStatus('Camera access denied: ' + err.message, 'error');
@@ -439,7 +429,6 @@
             document.getElementById('autoBtn').style.display = 'none';
             isAutoCapturing = false;
             document.getElementById('autoBtn').textContent = 'Auto Capture (5s)';
-            resetEnrollCapture();
             showStatus('Camera stopped', 'success');
         }
 
@@ -454,10 +443,8 @@
             return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
         }
 
-        // Initial enrollment requires exactly two images of the same person
-        // (cross-validated server-side). Manual two-click capture: first click
-        // grabs photo 1 and waits; second click grabs photo 2 and submits both.
-        // POST /api/v1/faces/enroll (form: external_id, image1, image2)
+        // Initial enrollment requires a single image of the person.
+        // POST /api/v1/faces/enroll (form: external_id, image)
         async function enrollFace() {
             const externalId = getExternalId();
             if (!stream) {
@@ -470,24 +457,13 @@
             }
 
             try {
-                if (!pendingEnrollBlob1) {
-                    showStatus('Capturing photo 1 of 2...', 'loading');
-                    pendingEnrollBlob1 = await captureFrameBlob();
-                    document.getElementById('enrollBtn').textContent = 'Enroll Face (photo 2 of 2 -- click again)';
-                    showStatus('Photo 1 captured ✅ -- move slightly, then click "Enroll Face" again for photo 2', 'success');
-                    return;
-                }
+                showStatus('Capturing photo...', 'loading');
+                const blob = await captureFrameBlob();
 
-                showStatus('Capturing photo 2 of 2...', 'loading');
-                const blob2 = await captureFrameBlob();
-                const blob1 = pendingEnrollBlob1;
-                resetEnrollCapture();
-
-                showStatus('Enrolling both photos...', 'loading');
+                showStatus('Enrolling photo...', 'loading');
                 const formData = new FormData();
                 formData.append('external_id', externalId);
-                formData.append('image1', blob1, 'enroll1.jpg');
-                formData.append('image2', blob2, 'enroll2.jpg');
+                formData.append('image', blob, 'enroll.jpg');
 
                 const response = await fetch(PYTHON_API + '/faces/enroll', {
                     method: 'POST',
@@ -496,14 +472,13 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    showStatus(`Enrolled "${data.external_id}" from 2 photos ✅ (image similarity ${(data.image_similarity * 100).toFixed(1)}%)`, 'success');
+                    showStatus(`Enrolled "${data.external_id}" ✅`, 'success');
                     displayRaw('Enrollment', data);
                 } else {
                     showStatus('Enrollment failed: ' + describeError(data), 'error');
                     displayRaw('Enrollment error', data);
                 }
             } catch (err) {
-                resetEnrollCapture();
                 showStatus('Error: ' + err.message, 'error');
             }
         }

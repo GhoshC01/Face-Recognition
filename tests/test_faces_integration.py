@@ -109,10 +109,7 @@ def _enroll(client, external_id: str):
     return client.post(
         "/api/v1/faces/enroll",
         data={"external_id": external_id},
-        files={
-            "image1": ("a.png", image_bytes, "image/png"),
-            "image2": ("b.png", image_bytes, "image/png"),
-        },
+        files={"image": ("a.png", image_bytes, "image/png")},
     )
 
 
@@ -132,7 +129,7 @@ def _verify(client, external_id: str | None = None):
 def test_enroll_then_verify_mode_b_pass(rigged_client):
     embedder = rigged_client.app.state.recognizer.embedder
     base = _unit_vector(512, seed=1)
-    embedder.queue(base, _nudged(base, seed=2))
+    embedder.queue(base)
 
     enroll_response = _enroll(rigged_client, "EMP001")
     assert enroll_response.status_code == 201, enroll_response.text
@@ -152,7 +149,7 @@ def test_enroll_then_verify_mode_b_pass(rigged_client):
 def test_verify_mode_b_fail_for_different_person(rigged_client):
     embedder = rigged_client.app.state.recognizer.embedder
     base = _unit_vector(512, seed=1)
-    embedder.queue(base, _nudged(base, seed=2))
+    embedder.queue(base)
     _enroll(rigged_client, "EMP001")
 
     stranger = _unit_vector(512, seed=42)  # unrelated direction -> low similarity
@@ -184,7 +181,7 @@ def test_verify_unknown_external_id_returns_404(rigged_client):
 def test_verify_mode_a_identification_pass(rigged_client):
     embedder = rigged_client.app.state.recognizer.embedder
     base = _unit_vector(512, seed=1)
-    embedder.queue(base, _nudged(base, seed=2))
+    embedder.queue(base)
     _enroll(rigged_client, "EMP001")
 
     embedder.queue(_nudged(base, seed=3))
@@ -200,7 +197,7 @@ def test_verify_mode_a_identification_pass(rigged_client):
 def test_verify_mode_a_fail_returns_null_external_id(rigged_client):
     embedder = rigged_client.app.state.recognizer.embedder
     base = _unit_vector(512, seed=1)
-    embedder.queue(base, _nudged(base, seed=2))
+    embedder.queue(base)
     _enroll(rigged_client, "EMP001")
 
     embedder.queue(_unit_vector(512, seed=42))  # unrelated -> below threshold
@@ -231,7 +228,7 @@ def test_verify_mode_a_with_nothing_enrolled_returns_fail(rigged_client):
 def test_verify_rejects_multiple_faces(rigged_client):
     embedder = rigged_client.app.state.recognizer.embedder
     base = _unit_vector(512, seed=1)
-    embedder.queue(base, _nudged(base, seed=2))
+    embedder.queue(base)
     _enroll(rigged_client, "EMP001")
 
     rigged_client.app.state.recognizer.detector.faces_to_return = [_default_face(), _default_face()]
@@ -267,7 +264,7 @@ def _verify_multi(client, num_frames: int, external_id: str | None = None, debug
 def test_verify_multi_pass_with_consistent_frames(rigged_client):
     embedder = rigged_client.app.state.recognizer.embedder
     base = _unit_vector(512, seed=1)
-    embedder.queue(base, _nudged(base, seed=2))
+    embedder.queue(base)
     _enroll(rigged_client, "EMP001")
 
     embedder.queue(_nudged(base, seed=3), _nudged(base, seed=4), _nudged(base, seed=5))
@@ -287,7 +284,7 @@ def test_verify_multi_ignores_a_no_face_frame_and_still_passes(rigged_client):
     embedder = rigged_client.app.state.recognizer.embedder
     detector = rigged_client.app.state.recognizer.detector
     base = _unit_vector(512, seed=1)
-    embedder.queue(base, _nudged(base, seed=2))
+    embedder.queue(base)
     _enroll(rigged_client, "EMP001")
 
     # 3 frames requested; the middle one detects no face and is skipped, so

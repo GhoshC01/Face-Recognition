@@ -60,7 +60,6 @@ class Settings(BaseSettings):
 
     # --- Enrollment ---
     enrollment_duplicate_policy: Literal["reject", "replace"] = "reject"
-    enrollment_min_image_similarity: float = 0.40
     # Raw enrollment photos are saved under <enrollment_images_dir>/<external_id>/<embedding_id>.jpg
     # for operator/audit reference. This is a deliberate deviation from the
     # "embeddings only" minimization stance described in SECURITY.md -- set to
