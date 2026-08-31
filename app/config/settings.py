@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     # --- Uploads ---
     max_upload_size_mb: int = 8
     allowed_content_types: list[str] = ["image/jpeg", "image/png", "image/webp"]
+    # Timeout for fetching image1_url / image2_url (S3 presigned or public HTTPS).
+    remote_image_timeout_seconds: float = 10.0
+    remote_image_max_redirects: int = 5
 
 
 @lru_cache

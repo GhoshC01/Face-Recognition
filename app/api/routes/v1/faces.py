@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
 from app.api.deps import (
@@ -11,6 +13,7 @@ from app.api.deps import (
     get_verification_service,
     require_api_key,
 )
+from app.api.remote_image import resolve_image_bytes
 from app.api.upload_validation import read_validated_upload
 from app.config.settings import Settings
 from app.core.exceptions import FaceServiceError
@@ -111,17 +114,39 @@ async def verify_faces_multi_frame(
 
 @router.post("/compare", response_model=FaceCompareResponse)
 async def compare_faces(
-    image1: UploadFile = File(..., description="First face image to compare"),
-    image2: UploadFile = File(..., description="Second face image to compare"),
+    image1: UploadFile | None = File(
+        default=None,
+        description="First face image as a file upload. Supply this or image1_url, not both.",
+    ),
+    image2: UploadFile | None = File(
+        default=None,
+        description="Second face image as a file upload. Supply this or image2_url, not both.",
+    ),
+    image1_url: str | None = Form(
+        default=None,
+        description="Public or S3 presigned HTTPS URL for the first image. The service downloads it.",
+    ),
+    image2_url: str | None = Form(
+        default=None,
+        description="Public or S3 presigned HTTPS URL for the second image. The service downloads it.",
+    ),
     settings: Settings = Depends(get_settings),
     service: EvaluationService = Depends(get_evaluation_service),
 ) -> FaceCompareResponse:
-    """Stateless 1:1 comparison of two images. Each image must contain
-    exactly one detectable face. No enrollment or identity lookup is
-    involved -- returns Match / Not matching plus a confidence score."""
+    """Stateless 1:1 comparison of two images. Each side is either a
+    multipart file (`image1` / `image2`) or a remote URL (`image1_url` /
+    `image2_url`, including S3 presigned links). The service fetches URLs
+    itself so the caller does not need to download from S3 first. Each
+    image must contain exactly one detectable face."""
     sw = Stopwatch()
-    first = decode_image_bytes(await read_validated_upload(image1, settings))
-    second = decode_image_bytes(await read_validated_upload(image2, settings))
+    timeout = httpx.Timeout(settings.remote_image_timeout_seconds)
+    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+        raw1, raw2 = await asyncio.gather(
+            resolve_image_bytes(image1, image1_url, settings, field_name="image1", client=client),
+            resolve_image_bytes(image2, image2_url, settings, field_name="image2", client=client),
+        )
+    first = decode_image_bytes(raw1)
+    second = decode_image_bytes(raw2)
     receive_ms = sw.lap_ms()
     try:
         return service.compare_pair(first, second)

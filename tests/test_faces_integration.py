@@ -366,6 +366,66 @@ def test_compare_rejects_no_face_image(rigged_client):
     assert response.json()["error_code"] == "no_face_detected"
 
 
+def test_compare_from_s3_urls(rigged_client, monkeypatch):
+    image_bytes = _encode_png(_valid_face_image())
+
+    async def fake_fetch(url, settings, **kwargs):
+        assert "X-Amz-Signature" in url
+        return image_bytes
+
+    monkeypatch.setattr("app.api.remote_image.fetch_remote_image", fake_fetch)
+
+    embedder = rigged_client.app.state.recognizer.embedder
+    base = _unit_vector(512, seed=1)
+    embedder.queue(base, _nudged(base, seed=2))
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare",
+        data={
+            "image1_url": (
+                "https://my-bucket.s3.ap-south-1.amazonaws.com/a.jpg?X-Amz-Signature=abc"
+            ),
+            "image2_url": (
+                "https://my-bucket.s3.ap-south-1.amazonaws.com/b.jpg?X-Amz-Signature=def"
+            ),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "Match"
+    assert body["matched"] is True
+
+
+def test_compare_mixed_file_and_s3_url(rigged_client, monkeypatch):
+    image_bytes = _encode_png(_valid_face_image())
+
+    async def fake_fetch(url, settings, **kwargs):
+        return image_bytes
+
+    monkeypatch.setattr("app.api.remote_image.fetch_remote_image", fake_fetch)
+
+    embedder = rigged_client.app.state.recognizer.embedder
+    base = _unit_vector(512, seed=1)
+    embedder.queue(base, _nudged(base, seed=2))
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare",
+        data={"image2_url": "https://my-bucket.s3.ap-south-1.amazonaws.com/b.jpg"},
+        files={"image1": ("a.png", image_bytes, "image/png")},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "Match"
+
+
+def test_compare_missing_both_images_returns_400(client):
+    response = client.post("/api/v1/faces/compare")
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "invalid_image_source"
+
+
 def test_verify_multi_rejects_invalid_frame_count(rigged_client):
     response = _verify_multi(rigged_client, num_frames=1, external_id="EMP001")
 

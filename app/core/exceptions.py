@@ -71,6 +71,22 @@ class PayloadTooLargeError(FaceServiceError):
     http_status = 413
 
 
+class InvalidImageSourceError(FaceServiceError):
+    """Raised when a compare image is missing, or both a file and a URL
+    were supplied for the same slot."""
+
+    error_code = "invalid_image_source"
+    http_status = 400
+
+
+class RemoteImageFetchError(FaceServiceError):
+    """Raised when a remote image URL cannot be fetched (bad URL, SSRF
+    block, timeout, or non-success HTTP status)."""
+
+    error_code = "remote_image_fetch_failed"
+    http_status = 502
+
+
 class InvalidEmbeddingError(FaceServiceError):
     """Raised when a vector cannot be treated as a valid face embedding --
     wrong shape, NaN/Inf values, or near-zero magnitude. Distinct from

@@ -111,6 +111,23 @@ def test_faces_compare_without_models_returns_service_unavailable(client):
     assert response.json()["error_code"] == "model_not_ready"
 
 
+def test_faces_compare_file_and_url_together_returns_400(client):
+    image = np.full((64, 64, 3), 128, dtype=np.uint8)
+    png_bytes = _encode_png(image)
+
+    response = client.post(
+        "/api/v1/faces/compare",
+        data={"image1_url": "https://my-bucket.s3.amazonaws.com/a.jpg"},
+        files={
+            "image1": ("a.png", png_bytes, "image/png"),
+            "image2": ("b.png", png_bytes, "image/png"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "invalid_image_source"
+
+
 def test_faces_verify_multi_rejects_too_few_frames(client):
     image = np.full((64, 64, 3), 128, dtype=np.uint8)
     png_bytes = _encode_png(image)
