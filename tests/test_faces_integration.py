@@ -304,6 +304,68 @@ def test_verify_multi_ignores_a_no_face_frame_and_still_passes(rigged_client):
     assert body["frames"][1]["rejection_reason"] == "no_face_detected"
 
 
+# --- two-image compare (no enrollment) ---
+
+
+def _compare(client):
+    image_bytes = _encode_png(_valid_face_image())
+    return client.post(
+        "/api/v1/faces/compare",
+        files={
+            "image1": ("a.png", image_bytes, "image/png"),
+            "image2": ("b.png", image_bytes, "image/png"),
+        },
+    )
+
+
+def test_compare_same_person_returns_match(rigged_client):
+    embedder = rigged_client.app.state.recognizer.embedder
+    base = _unit_vector(512, seed=1)
+    embedder.queue(base, _nudged(base, seed=2))
+
+    response = _compare(rigged_client)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "Match"
+    assert body["matched"] is True
+    assert body["confidence"] >= body["threshold"]
+    assert "image1" in body and "image2" in body
+
+
+def test_compare_different_people_returns_not_matching(rigged_client):
+    embedder = rigged_client.app.state.recognizer.embedder
+    embedder.queue(_unit_vector(512, seed=1), _unit_vector(512, seed=99))
+
+    response = _compare(rigged_client)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "Not matching"
+    assert body["matched"] is False
+    assert body["confidence"] < body["threshold"]
+
+
+def test_compare_rejects_multiple_faces(rigged_client):
+    embedder = rigged_client.app.state.recognizer.embedder
+    embedder.queue(_unit_vector(512, seed=1))
+    rigged_client.app.state.recognizer.detector.faces_to_return = [_default_face(), _default_face()]
+
+    response = _compare(rigged_client)
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "multiple_faces_detected"
+
+
+def test_compare_rejects_no_face_image(rigged_client):
+    rigged_client.app.state.recognizer.detector.faces_to_return = []
+
+    response = _compare(rigged_client)
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "no_face_detected"
+
+
 def test_verify_multi_rejects_invalid_frame_count(rigged_client):
     response = _verify_multi(rigged_client, num_frames=1, external_id="EMP001")
 

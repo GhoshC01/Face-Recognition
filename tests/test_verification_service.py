@@ -77,6 +77,21 @@ def test_evaluation_service_compares_two_images_directly(recognizer):
     assert different_face.result == "FAIL"
 
 
+def test_evaluation_service_compare_pair_returns_match_and_confidence(recognizer):
+    evaluation = EvaluationService(recognizer=recognizer, similarity_threshold=0.99)
+
+    same_face = evaluation.compare_pair(make_synthetic_image(7), make_synthetic_image(7))
+    different_face = evaluation.compare_pair(make_synthetic_image(7), make_synthetic_image(42))
+
+    assert same_face.status == "Match"
+    assert same_face.matched is True
+    assert same_face.confidence >= same_face.threshold
+
+    assert different_face.status == "Not matching"
+    assert different_face.matched is False
+    assert different_face.confidence < different_face.threshold
+
+
 def test_enrollment_remove_unknown_identity_raises(store, recognizer):
     enrollment = EnrollmentService(recognizer=recognizer, vector_store=store)
     with pytest.raises(IdentityNotFoundError):

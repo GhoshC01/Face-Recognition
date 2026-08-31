@@ -4,13 +4,20 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
-from app.api.deps import get_enrollment_service, get_settings, get_verification_service, require_api_key
+from app.api.deps import (
+    get_enrollment_service,
+    get_evaluation_service,
+    get_settings,
+    get_verification_service,
+    require_api_key,
+)
 from app.api.upload_validation import read_validated_upload
 from app.config.settings import Settings
 from app.core.exceptions import FaceServiceError
 from app.schemas.enrollment import EnrollmentResponse
-from app.schemas.verification import FaceVerificationResponse, MultiFrameVerificationResponse
+from app.schemas.verification import FaceCompareResponse, FaceVerificationResponse, MultiFrameVerificationResponse
 from app.services.enrollment_service import EnrollmentService
+from app.services.evaluation_service import EvaluationService
 from app.services.verification_service import VerificationService
 from app.utils.image_utils import decode_image_bytes
 from app.utils.timing import Stopwatch
@@ -100,3 +107,26 @@ async def verify_faces_multi_frame(
             images.append(None)
 
     return service.verify_multi_frame(images, external_id=external_id, debug=debug)
+
+
+@router.post("/compare", response_model=FaceCompareResponse)
+async def compare_faces(
+    image1: UploadFile = File(..., description="First face image to compare"),
+    image2: UploadFile = File(..., description="Second face image to compare"),
+    settings: Settings = Depends(get_settings),
+    service: EvaluationService = Depends(get_evaluation_service),
+) -> FaceCompareResponse:
+    """Stateless 1:1 comparison of two images. Each image must contain
+    exactly one detectable face. No enrollment or identity lookup is
+    involved -- returns Match / Not matching plus a confidence score."""
+    sw = Stopwatch()
+    first = decode_image_bytes(await read_validated_upload(image1, settings))
+    second = decode_image_bytes(await read_validated_upload(image2, settings))
+    receive_ms = sw.lap_ms()
+    try:
+        return service.compare_pair(first, second)
+    finally:
+        logger.info(
+            "compare_route_timings",
+            extra={"receive_ms": receive_ms, "route_total_ms": sw.lap_ms() + receive_ms},
+        )

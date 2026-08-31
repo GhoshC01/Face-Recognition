@@ -313,7 +313,7 @@
     <div class="container">
         <div class="header">
             <h1>🎥 Face Verification API - Test UI</h1>
-            <p>Enroll and identify faces against the local Face Verification API</p>
+            <p>Enroll and identify faces against the Face Verification API at <code>http://65.0.55.53:9001</code></p>
         </div>
 
         <div class="info-box">
@@ -384,11 +384,14 @@
 
     <script>
         // This service is versioned under /api/v1 and has no HRMS/employee
-        // concept -- see README.md. Point this at wherever `uvicorn app.main:app`
-        // is actually running.
+        // concept -- see README.md. PYTHON_API is the remote host; every
+        // fetch below appends /api/v1 + the route.
+        // const PYTHON_API = 'http://localhost:8000';
+        const PYTHON_API = 'http://65.0.55.53:9001';
 
-        
-        const PYTHON_API = 'http://localhost:8000/api/v1';
+        function apiUrl(path) {
+            return PYTHON_API.replace(/\/+$/, '') + '/api/v1' + path;
+        }
 
         let stream = null;
         let frameCount = 0;
@@ -467,7 +470,7 @@
                 formData.append('external_id', externalId);
                 formData.append('image', blob, 'enroll.jpg');
 
-                const response = await fetch(PYTHON_API + '/faces/enroll', {
+                const response = await fetch(apiUrl('/faces/enroll'), {
                     method: 'POST',
                     body: formData
                 });
@@ -506,7 +509,7 @@
                     formData.append('external_id', externalId);
                 }
 
-                const response = await fetch(PYTHON_API + '/faces/verify', {
+                const response = await fetch(apiUrl('/faces/verify'), {
                     method: 'POST',
                     body: formData
                 });
@@ -556,7 +559,7 @@
             }
             try {
                 showStatus('Checking enrollment status...', 'loading');
-                const response = await fetch(PYTHON_API + '/enrollment/' + encodeURIComponent(externalId));
+                const response = await fetch(apiUrl('/enrollment/' + encodeURIComponent(externalId)));
                 const data = await response.json();
                 if (response.ok) {
                     showStatus(`"${data.external_id}": ${data.enrolled ? data.embedding_count + ' embedding(s) enrolled' : 'not enrolled'}`, 'success');
@@ -579,7 +582,7 @@
             }
             try {
                 showStatus('Removing enrollment...', 'loading');
-                const response = await fetch(PYTHON_API + '/enrollment/' + encodeURIComponent(externalId), {
+                const response = await fetch(apiUrl('/enrollment/' + encodeURIComponent(externalId)), {
                     method: 'DELETE'
                 });
                 const data = await response.json();

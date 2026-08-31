@@ -39,6 +39,28 @@ class CompareResponse(BaseModel):
     processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class FaceCompareImageSchema(BaseModel):
+    detection_score: float
+    quality: QualityResultSchema
+
+
+class FaceCompareResponse(BaseModel):
+    """Response for POST /api/v1/faces/compare.
+
+    Stateless two-image comparison: no enrollment or vector-store lookup.
+    `confidence` is cosine similarity in [0, 1]; `status` is Match when
+    confidence clears `threshold`, otherwise Not matching.
+    """
+
+    matched: bool
+    status: Literal["Match", "Not matching"]
+    confidence: float
+    threshold: float
+    image1: FaceCompareImageSchema
+    image2: FaceCompareImageSchema
+    processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class FaceVerificationResponse(BaseModel):
     """Response for POST /api/v1/faces/verify.
 
