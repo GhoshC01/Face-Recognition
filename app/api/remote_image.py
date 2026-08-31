@@ -4,6 +4,7 @@ import ipaddress
 import logging
 import socket
 from collections.abc import Callable
+from typing import Union
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
@@ -33,7 +34,9 @@ _OPAQUE_CONTENT_TYPES = frozenset(
 )
 _CONTENT_TYPE_ALIASES = {"image/jpg": "image/jpeg"}
 
-IpResolver = Callable[[str], list[ipaddress.IPv4Address | ipaddress.IPv6Address]]
+# Type aliases are evaluated at import time, so `|` is not valid on Python 3.9.
+IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+IpResolver = Callable[[str], list[IPAddress]]
 
 
 def _redact_url(url: str) -> str:
