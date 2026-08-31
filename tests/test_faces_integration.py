@@ -363,7 +363,137 @@ def test_compare_rejects_no_face_image(rigged_client):
     response = _compare(rigged_client)
 
     assert response.status_code == 422
-    assert response.json()["error_code"] == "no_face_detected"
+    body = response.json()
+    assert body["error_code"] == "no_face_detected"
+    assert body["details"]["failed_images"] == ["image1", "image2"]
+    assert body["details"]["image1"]["ok"] is False
+    assert body["details"]["image2"]["ok"] is False
+    assert "image1:" in body["message"]
+    assert "image2:" in body["message"]
+
+
+def _too_small_face() -> Face:
+    """50x50 px box: below the enroll/verify 60px floor, with usable landmarks
+    so compare can still align and embed after the lenient quality gate."""
+    return Face(
+        box=(20, 20, 70, 70),
+        score=0.97,
+        landmarks=np.array(
+            [
+                [30.0, 35.0],
+                [55.0, 35.0],
+                [42.0, 48.0],
+                [32.0, 58.0],
+                [54.0, 58.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
+def _flat_image(size: int = 300) -> np.ndarray:
+    return np.full((size, size, 3), 128, dtype=np.uint8)
+
+
+def test_compare_accepts_small_face_on_image1(rigged_client):
+    detector = rigged_client.app.state.recognizer.detector
+    embedder = rigged_client.app.state.recognizer.embedder
+    detector.queue([_too_small_face()], [_default_face()])
+    base = _unit_vector(512, seed=1)
+    embedder.queue(base, _nudged(base, seed=2))
+
+    response = _compare(rigged_client)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "Match"
+
+
+def test_compare_accepts_small_face_on_image2(rigged_client):
+    detector = rigged_client.app.state.recognizer.detector
+    embedder = rigged_client.app.state.recognizer.embedder
+    detector.queue([_default_face()], [_too_small_face()])
+    base = _unit_vector(512, seed=1)
+    embedder.queue(base, _nudged(base, seed=2))
+
+    response = _compare(rigged_client)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "Match"
+
+
+def test_compare_small_face_on_image1_still_reports_no_face_on_image2(rigged_client):
+    detector = rigged_client.app.state.recognizer.detector
+    embedder = rigged_client.app.state.recognizer.embedder
+    detector.queue([_too_small_face()], [])
+    embedder.queue(_unit_vector(512, seed=1))
+
+    response = _compare(rigged_client)
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "no_face_detected"
+    assert body["details"]["failed_images"] == ["image2"]
+    assert body["details"]["image1"] == {"ok": True}
+    assert body["details"]["image2"]["error_code"] == "no_face_detected"
+    assert "image1: OK" in body["message"]
+    assert "image2:" in body["message"]
+
+
+def test_compare_rejects_extremely_blurry_image2(rigged_client):
+    detector = rigged_client.app.state.recognizer.detector
+    embedder = rigged_client.app.state.recognizer.embedder
+    detector.queue([_default_face()], [_default_face()])
+    embedder.queue(_unit_vector(512, seed=1))
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare",
+        files={
+            "image1": ("a.png", _encode_png(_valid_face_image()), "image/png"),
+            "image2": ("b.png", _encode_png(_flat_image()), "image/png"),
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "low_image_quality"
+    assert body["details"]["failed_images"] == ["image2"]
+    assert body["details"]["image1"] == {"ok": True}
+    assert "image_too_blurry" in body["details"]["image2"]["reasons"]
+    assert "image1: OK" in body["message"]
+    assert "too blurry" in body["message"]
+
+
+def test_compare_rejects_extremely_blurry_on_both_images(rigged_client):
+    rigged_client.app.state.recognizer.detector.faces_to_return = [_default_face()]
+    blurry = _encode_png(_flat_image())
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare",
+        files={
+            "image1": ("a.png", blurry, "image/png"),
+            "image2": ("b.png", blurry, "image/png"),
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "low_image_quality"
+    assert body["details"]["failed_images"] == ["image1", "image2"]
+    assert "image_too_blurry" in body["details"]["image1"]["reasons"]
+    assert "image_too_blurry" in body["details"]["image2"]["reasons"]
+    assert "image1:" in body["message"]
+    assert "image2:" in body["message"]
+
+
+def test_enroll_still_rejects_face_too_small(rigged_client):
+    rigged_client.app.state.recognizer.detector.faces_to_return = [_too_small_face()]
+
+    response = _enroll(rigged_client, "EMP001")
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "low_image_quality"
+    assert "face_too_small" in body["details"]["reasons"]
 
 
 def test_compare_from_s3_urls(rigged_client, monkeypatch):

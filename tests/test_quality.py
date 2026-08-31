@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.core.quality import QualityChecker, QualityThresholds
+from app.core.quality import QualityChecker, QualityThresholds, describe_quality_failure, lenient_quality_thresholds
 
 
 def make_checker(**overrides) -> QualityChecker:
@@ -87,6 +87,18 @@ def test_rejects_small_face_below_absolute_pixel_minimum():
     assert "face_too_small" in result.reasons
 
 
+def test_describe_quality_failure_includes_observed_face_size():
+    checker = make_checker(min_face_area_ratio=0.0)
+    image = well_lit_sharp_image(1000)
+    result = checker.evaluate(image, box=(0, 0, 30, 30), detection_confidence=0.9)
+
+    message = describe_quality_failure(result, checker.thresholds)
+
+    assert "face is too small" in message
+    assert "30x30px" in message
+    assert "minimum 60x60px" in message
+
+
 def test_rejects_small_face_relative_to_frame():
     checker = make_checker(min_face_width_px=1, min_face_height_px=1)  # isolate the ratio check
     image = well_lit_sharp_image(1000)
@@ -138,3 +150,24 @@ def test_result_shape_matches_contract():
     assert hasattr(result, "quality_score")
     assert hasattr(result, "reasons")
     assert isinstance(result.reasons, list)
+
+
+def test_lenient_thresholds_accept_small_dark_and_low_confidence_faces():
+    checker = QualityChecker(lenient_quality_thresholds())
+    dark_small = np.full((1000, 1000, 3), 10, dtype=np.uint8)
+    dark_small[::2, ::2] = 25
+
+    result = checker.evaluate(dark_small, box=(0, 0, 30, 30), detection_confidence=0.1)
+
+    assert result.accepted is True
+    assert result.reasons == []
+
+
+def test_lenient_thresholds_reject_only_extremely_blurry_crops():
+    checker = QualityChecker(lenient_quality_thresholds())
+    flat = np.full((200, 200, 3), 128, dtype=np.uint8)
+
+    result = checker.evaluate(flat, box=(0, 0, 200, 200), detection_confidence=0.9)
+
+    assert result.accepted is False
+    assert result.reasons == ["image_too_blurry"]

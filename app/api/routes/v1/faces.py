@@ -16,11 +16,11 @@ from app.api.deps import (
 from app.api.remote_image import resolve_image_bytes
 from app.api.upload_validation import read_validated_upload
 from app.config.settings import Settings
-from app.core.exceptions import FaceServiceError
+from app.core.exceptions import FaceServiceError, InvalidImageError
 from app.schemas.enrollment import EnrollmentResponse
 from app.schemas.verification import FaceCompareResponse, FaceVerificationResponse, MultiFrameVerificationResponse
 from app.services.enrollment_service import EnrollmentService
-from app.services.evaluation_service import EvaluationService
+from app.services.evaluation_service import EvaluationService, raise_if_compare_sides_failed
 from app.services.verification_service import VerificationService
 from app.utils.image_utils import decode_image_bytes
 from app.utils.timing import Stopwatch
@@ -28,6 +28,13 @@ from app.utils.timing import Stopwatch
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/faces", tags=["faces"], dependencies=[Depends(require_api_key)])
+
+
+def _try_decode(raw: bytes):
+    try:
+        return decode_image_bytes(raw), None
+    except InvalidImageError as exc:
+        return None, exc
 
 
 @router.post("/enroll", response_model=EnrollmentResponse, status_code=status.HTTP_201_CREATED)
@@ -145,8 +152,10 @@ async def compare_faces(
             resolve_image_bytes(image1, image1_url, settings, field_name="image1", client=client),
             resolve_image_bytes(image2, image2_url, settings, field_name="image2", client=client),
         )
-    first = decode_image_bytes(raw1)
-    second = decode_image_bytes(raw2)
+    first, decode_error1 = _try_decode(raw1)
+    second, decode_error2 = _try_decode(raw2)
+    raise_if_compare_sides_failed(decode_error1, decode_error2)
+    assert first is not None and second is not None
     receive_ms = sw.lap_ms()
     try:
         return service.compare_pair(first, second)

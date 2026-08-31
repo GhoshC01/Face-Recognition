@@ -18,7 +18,7 @@ from app.config.settings import get_settings
 from app.core.detector import FaceDetector
 from app.core.embedding import FaceEmbedder
 from app.core.exceptions import ModelNotReadyError
-from app.core.quality import QualityChecker, QualityThresholds
+from app.core.quality import QualityChecker, QualityThresholds, lenient_quality_thresholds
 from app.core.recognizer import FaceRecognizer
 from app.core.vector_store import VectorStore
 from app.services.enrollment_service import EnrollmentService
@@ -124,6 +124,9 @@ async def lifespan(app: FastAPI):
     app.state.evaluation_service = EvaluationService(
         recognizer=recognizer,
         similarity_threshold=settings.verification_similarity_threshold,
+        quality_checker=QualityChecker(
+            lenient_quality_thresholds(min_sharpness=settings.compare_min_sharpness)
+        ),
     )
 
     logger.info("service_started", extra={"environment": settings.environment})

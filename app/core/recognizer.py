@@ -9,7 +9,7 @@ from app.core.alignment import align_face
 from app.core.detector import Face, FaceDetector
 from app.core.embedding import FaceEmbedder
 from app.core.exceptions import LowImageQualityError, MultipleFacesDetectedError, NoFaceDetectedError
-from app.core.quality import QualityChecker, QualityResult
+from app.core.quality import QualityChecker, QualityResult, describe_quality_failure, quality_metrics_as_dict
 from app.utils.timing import Stopwatch
 
 logger = logging.getLogger(__name__)
@@ -50,20 +50,27 @@ class FaceRecognizer:
 
         return max(faces[: self.max_faces_to_consider], key=lambda f: f.area)
 
-    def process(self, image: np.ndarray, strict_single_face: bool = False) -> FaceEmbeddingResult:
+    def process(
+        self,
+        image: np.ndarray,
+        strict_single_face: bool = False,
+        quality_checker: QualityChecker | None = None,
+    ) -> FaceEmbeddingResult:
+        checker = quality_checker or self.quality_checker
         sw = Stopwatch()
         faces = self.detector.detect(image)
         detect_ms = sw.lap_ms()
 
         face = self._select_face(faces, strict_single_face)
 
-        quality_result = self.quality_checker.evaluate(image, face.box, face.score)
+        quality_result = checker.evaluate(image, face.box, face.score)
         quality_ms = sw.lap_ms()
         if not quality_result.accepted:
             raise LowImageQualityError(
-                "Face image did not pass quality checks",
+                describe_quality_failure(quality_result, checker.thresholds),
                 reasons=quality_result.reasons,
                 quality_score=quality_result.quality_score,
+                metrics=quality_metrics_as_dict(quality_result.metrics),
             )
 
         alignment = align_face(image, face.landmarks, output_size=self.embedder.input_size[0])

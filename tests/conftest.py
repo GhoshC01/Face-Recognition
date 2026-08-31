@@ -38,7 +38,12 @@ class FakeRecognizer:
     def __init__(self, dimension: int = 8):
         self.dimension = dimension
 
-    def process(self, image: np.ndarray, strict_single_face: bool = False) -> FaceEmbeddingResult:
+    def process(
+        self,
+        image: np.ndarray,
+        strict_single_face: bool = False,
+        quality_checker=None,
+    ) -> FaceEmbeddingResult:
         marker = int(image[0, 0, 0])
         rng = np.random.default_rng(marker)
         embedding = rng.normal(size=self.dimension).astype(np.float32)

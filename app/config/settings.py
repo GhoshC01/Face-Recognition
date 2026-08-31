@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     quality_min_brightness: float = 40.0
     quality_max_brightness: float = 230.0
     quality_min_sharpness: float = 60.0
+    # Compare-only: size/brightness/confidence gates are off. This is the
+    # Laplacian-variance floor for "extremely blurry / unusable" — typical
+    # live captures sit well above it; only a smear fails.
+    compare_min_sharpness: float = 8.0
 
     # --- Storage ---
     faiss_index_dir: str = "storage/faiss"

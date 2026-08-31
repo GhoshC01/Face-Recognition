@@ -79,6 +79,15 @@ class InvalidImageSourceError(FaceServiceError):
     http_status = 400
 
 
+class CompareImagesError(FaceServiceError):
+    """Raised when image1 and image2 fail compare for *different* reasons
+    (e.g. quality on one side, no face on the other). Same-reason failures
+    keep the original error_code so existing clients still match."""
+
+    error_code = "compare_images_failed"
+    http_status = 422
+
+
 class RemoteImageFetchError(FaceServiceError):
     """Raised when a remote image URL cannot be fetched (bad URL, SSRF
     block, timeout, or non-success HTTP status)."""

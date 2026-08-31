@@ -34,6 +34,30 @@ class QualityThresholds:
     min_sharpness: float = 60.0
 
 
+# Compare is a live-capture / shared-photo path: size, brightness, and
+# detection-confidence gates would reject usable frames. Only a near-zero
+# sharpness floor remains (plus structural invalid_face_crop).
+_COMPARE_DISABLED_FACE_PX = 1
+_COMPARE_DISABLED_AREA_RATIO = 0.0
+_COMPARE_DISABLED_CONFIDENCE = 0.0
+_COMPARE_DISABLED_MIN_BRIGHTNESS = 0.0
+_COMPARE_DISABLED_MAX_BRIGHTNESS = 255.0
+DEFAULT_COMPARE_MIN_SHARPNESS = 8.0
+
+
+def lenient_quality_thresholds(*, min_sharpness: float = DEFAULT_COMPARE_MIN_SHARPNESS) -> QualityThresholds:
+    """Thresholds that only fail an unusable (extremely blurry) crop."""
+    return QualityThresholds(
+        min_detection_confidence=_COMPARE_DISABLED_CONFIDENCE,
+        min_face_width_px=_COMPARE_DISABLED_FACE_PX,
+        min_face_height_px=_COMPARE_DISABLED_FACE_PX,
+        min_face_area_ratio=_COMPARE_DISABLED_AREA_RATIO,
+        min_brightness=_COMPARE_DISABLED_MIN_BRIGHTNESS,
+        max_brightness=_COMPARE_DISABLED_MAX_BRIGHTNESS,
+        min_sharpness=min_sharpness,
+    )
+
+
 @dataclass
 class QualityObservedMetrics:
     """Raw measurements the checker computed, independent of pass/fail."""
@@ -159,3 +183,72 @@ class QualityChecker:
             reasons=reasons,
             metrics=metrics,
         )
+
+
+_REASON_FALLBACK = {
+    REASON_LOW_DETECTION_CONFIDENCE: "face detection confidence is too low",
+    REASON_INVALID_FACE_CROP: "detected face region is invalid",
+    REASON_FACE_TOO_SMALL: "face is too small",
+    REASON_FACE_AREA_RATIO_TOO_LOW: "face occupies too little of the image",
+    REASON_IMAGE_TOO_DARK: "image is too dark",
+    REASON_IMAGE_OVEREXPOSED: "image is overexposed",
+    REASON_IMAGE_TOO_BLURRY: "image is too blurry",
+}
+
+
+def quality_metrics_as_dict(metrics: QualityObservedMetrics | None) -> dict[str, float | int] | None:
+    """JSON-safe copy of observed metrics (native Python types only)."""
+    if metrics is None:
+        return None
+    return {
+        "detection_confidence": float(metrics.detection_confidence),
+        "face_width": int(metrics.face_width),
+        "face_height": int(metrics.face_height),
+        "face_area_ratio": float(metrics.face_area_ratio),
+        "brightness": float(metrics.brightness),
+        "sharpness": float(metrics.sharpness),
+    }
+
+
+def describe_quality_failure(result: QualityResult, thresholds: QualityThresholds) -> str:
+    """Human-readable summary of why a quality gate rejected a face crop.
+
+    Includes observed vs minimum values so the caller can tell *how* a check
+    failed (e.g. 48x52px vs a 60x60px floor), not just the reason code.
+    """
+    parts: list[str] = []
+    m = result.metrics
+    t = thresholds
+    for reason in result.reasons:
+        if reason == REASON_FACE_TOO_SMALL and m is not None:
+            parts.append(
+                f"face is too small ({m.face_width}x{m.face_height}px; "
+                f"minimum {t.min_face_width_px}x{t.min_face_height_px}px)"
+            )
+        elif reason == REASON_FACE_AREA_RATIO_TOO_LOW and m is not None:
+            parts.append(
+                f"face occupies too little of the image "
+                f"({m.face_area_ratio:.1%}; minimum {t.min_face_area_ratio:.1%})"
+            )
+        elif reason == REASON_LOW_DETECTION_CONFIDENCE and m is not None:
+            parts.append(
+                f"face detection confidence is too low "
+                f"({m.detection_confidence:.2f}; minimum {t.min_detection_confidence:.2f})"
+            )
+        elif reason == REASON_IMAGE_TOO_DARK and m is not None:
+            parts.append(
+                f"image is too dark (brightness {m.brightness:.0f}; minimum {t.min_brightness:.0f})"
+            )
+        elif reason == REASON_IMAGE_OVEREXPOSED and m is not None:
+            parts.append(
+                f"image is overexposed (brightness {m.brightness:.0f}; maximum {t.max_brightness:.0f})"
+            )
+        elif reason == REASON_IMAGE_TOO_BLURRY and m is not None:
+            parts.append(
+                f"image is too blurry (sharpness {m.sharpness:.0f}; minimum {t.min_sharpness:.0f})"
+            )
+        else:
+            parts.append(_REASON_FALLBACK.get(reason, reason.replace("_", " ")))
+    if not parts:
+        return "Face image did not pass quality checks"
+    return "Face image did not pass quality checks: " + "; ".join(parts)
