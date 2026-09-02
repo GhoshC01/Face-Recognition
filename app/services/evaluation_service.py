@@ -90,18 +90,24 @@ class EvaluationService:
     ) -> None:
         self.recognizer = recognizer
         self.similarity_threshold = similarity_threshold
-        # Compare never uses the enroll/verify quality floor. Unset means the
-        # built-in lenient preset (only extremely blurry crops fail).
+        # image2 (live capture): only extremely blurry crops fail.
         self.quality_checker = quality_checker or QualityChecker(lenient_quality_thresholds())
+        # image1 / image1_url (stored/shared): no blur floor.
+        self.image1_quality_checker = QualityChecker(lenient_quality_thresholds(min_sharpness=0.0))
 
     def _process_side(
-        self, image, *, strict_single_face: bool
+        self,
+        image,
+        *,
+        strict_single_face: bool,
+        quality_checker: QualityChecker | None = None,
     ) -> tuple[FaceEmbeddingResult | None, FaceServiceError | None]:
+        checker = quality_checker if quality_checker is not None else self.quality_checker
         try:
             return self.recognizer.process(
                 image,
                 strict_single_face=strict_single_face,
-                quality_checker=self.quality_checker,
+                quality_checker=checker,
             ), None
         except _COMPARE_SIDE_ERRORS as exc:
             return None, exc
@@ -129,13 +135,18 @@ class EvaluationService:
         (`strict_single_face=True`) and returns Match / Not matching plus a
         confidence score instead of the legacy PASS/FAIL envelope.
 
-        Quality is lenient: size/brightness/confidence never fail a compare
-        image. Only an extremely blurry crop (or no/multiple faces) rejects.
-        Both images are always processed so a failure names *which* side
-        rejected (image1 vs image2) and still reports the other side.
+        Quality is lenient on both sides (size/brightness/confidence never
+        fail). Blur is checked only on image2 — image1 / image1_url is never
+        rejected for blur. An extremely blurry capture, or no/multiple faces,
+        still rejects. Both images are always processed so a failure names
+        which side rejected.
         """
-        result1, error1 = self._process_side(image1, strict_single_face=True)
-        result2, error2 = self._process_side(image2, strict_single_face=True)
+        result1, error1 = self._process_side(
+            image1, strict_single_face=True, quality_checker=self.image1_quality_checker
+        )
+        result2, error2 = self._process_side(
+            image2, strict_single_face=True, quality_checker=self.quality_checker
+        )
         raise_if_compare_sides_failed(error1, error2)
         assert result1 is not None and result2 is not None
 

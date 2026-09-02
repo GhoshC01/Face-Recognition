@@ -463,8 +463,11 @@ def test_compare_rejects_extremely_blurry_image2(rigged_client):
     assert "too blurry" in body["message"]
 
 
-def test_compare_rejects_extremely_blurry_on_both_images(rigged_client):
-    rigged_client.app.state.recognizer.detector.faces_to_return = [_default_face()]
+def test_compare_ignores_blur_on_image1_and_still_rejects_blurry_image2(rigged_client):
+    detector = rigged_client.app.state.recognizer.detector
+    embedder = rigged_client.app.state.recognizer.embedder
+    detector.queue([_default_face()], [_default_face()])
+    embedder.queue(_unit_vector(512, seed=1))
     blurry = _encode_png(_flat_image())
 
     response = rigged_client.post(
@@ -478,11 +481,29 @@ def test_compare_rejects_extremely_blurry_on_both_images(rigged_client):
     assert response.status_code == 422
     body = response.json()
     assert body["error_code"] == "low_image_quality"
-    assert body["details"]["failed_images"] == ["image1", "image2"]
-    assert "image_too_blurry" in body["details"]["image1"]["reasons"]
+    assert body["details"]["failed_images"] == ["image2"]
+    assert body["details"]["image1"] == {"ok": True}
     assert "image_too_blurry" in body["details"]["image2"]["reasons"]
-    assert "image1:" in body["message"]
-    assert "image2:" in body["message"]
+    assert "image1: OK" in body["message"]
+
+
+def test_compare_accepts_blurry_image1_when_image2_is_ok(rigged_client):
+    detector = rigged_client.app.state.recognizer.detector
+    embedder = rigged_client.app.state.recognizer.embedder
+    detector.queue([_default_face()], [_default_face()])
+    base = _unit_vector(512, seed=1)
+    embedder.queue(base, _nudged(base, seed=2))
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare",
+        files={
+            "image1": ("a.png", _encode_png(_flat_image()), "image/png"),
+            "image2": ("b.png", _encode_png(_valid_face_image()), "image/png"),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "Match"
 
 
 def test_enroll_still_rejects_face_too_small(rigged_client):
