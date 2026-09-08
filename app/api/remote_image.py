@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import socket
@@ -13,6 +14,8 @@ from fastapi import UploadFile
 from app.api.upload_validation import read_validated_upload
 from app.config.settings import Settings
 from app.core.exceptions import (
+    FaceServiceError,
+    InvalidImageCountError,
     InvalidImageSourceError,
     PayloadTooLargeError,
     RemoteImageFetchError,
@@ -243,3 +246,86 @@ async def resolve_image_bytes(
 
     logger.info("fetching_remote_compare_image", extra={"field": field_name, "url": _redact_url(url.strip())})
     return await fetch_remote_image(url.strip(), settings, client=client, resolve_ips=resolve_ips)
+
+
+def _annotate_source_error(exc: FaceServiceError, image_index: int) -> FaceServiceError:
+    return type(exc)(
+        f"image[{image_index}]: {exc.message}",
+        image_index=image_index,
+        **exc.details,
+    )
+
+
+async def resolve_image_list(
+    files: list[UploadFile] | None,
+    urls: list[str] | str | None,
+    settings: Settings,
+    *,
+    max_images: int,
+    file_field: str = "images",
+    url_field: str = "image_urls",
+    client: httpx.AsyncClient | None = None,
+    resolve_ips: IpResolver | None = None,
+) -> list[bytes]:
+    """Resolve 1..N images from either multipart files or remote URLs.
+
+    Exactly one source type must be supplied. Order is preserved so the first
+    image can be used as the same-face reference by callers.
+    """
+    populated_files = [file for file in (files or []) if _is_populated_upload(file)]
+    if isinstance(urls, str):
+        urls = [urls]
+    populated_urls = [url.strip() for url in (urls or []) if url and url.strip()]
+
+    if populated_files and populated_urls:
+        raise InvalidImageSourceError(
+            f"Provide either {file_field} as files or {url_field}, not both",
+            field=file_field,
+        )
+    if not populated_files and not populated_urls:
+        raise InvalidImageSourceError(
+            f"Either {file_field} (files) or {url_field} is required",
+            field=file_field,
+        )
+
+    count = len(populated_files) or len(populated_urls)
+    if count > max_images:
+        raise InvalidImageCountError(
+            f"At most {max_images} images are allowed per request",
+            image_count=count,
+            max_images=max_images,
+        )
+
+    if populated_files:
+        resolved: list[bytes] = []
+        for index, file in enumerate(populated_files):
+            try:
+                resolved.append(await read_validated_upload(file, settings))
+            except FaceServiceError as exc:
+                raise _annotate_source_error(exc, index) from exc
+        return resolved
+
+    own_client = client is None
+    timeout = httpx.Timeout(settings.remote_image_timeout_seconds)
+    http_client = client or httpx.AsyncClient(follow_redirects=False, timeout=timeout)
+
+    async def _fetch_one(index: int, url: str) -> bytes:
+        try:
+            logger.info(
+                "fetching_remote_embed_image",
+                extra={"image_index": index, "url": _redact_url(url)},
+            )
+            return await fetch_remote_image(
+                url,
+                settings,
+                client=http_client,
+                resolve_ips=resolve_ips,
+            )
+        except FaceServiceError as exc:
+            raise _annotate_source_error(exc, index) from exc
+
+    try:
+        return list(await asyncio.gather(*[_fetch_one(index, url) for index, url in enumerate(populated_urls)]))
+    finally:
+        if own_client:
+            await http_client.aclose()

@@ -582,3 +582,138 @@ def test_verify_multi_rejects_invalid_frame_count(rigged_client):
 
     assert response.status_code == 400
     assert response.json()["error_code"] == "invalid_frame_count"
+
+
+# --- stateless embedding extraction ---
+
+
+def _embed(client, num_images: int = 1):
+    image_bytes = _encode_png(_valid_face_image())
+    files = [("images", (f"{i}.png", image_bytes, "image/png")) for i in range(num_images)]
+    return client.post("/api/v1/faces/embed", files=files)
+
+
+def test_embed_single_image(rigged_client):
+    embedder = rigged_client.app.state.recognizer.embedder
+    vector = _unit_vector(512, seed=11)
+    embedder.queue(vector)
+
+    response = _embed(rigged_client, num_images=1)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["images_processed"] == 1
+    assert body["consistency_checked"] is False
+    assert body["consistency_threshold"] is None
+    assert len(body["embeddings"]) == 1
+    assert body["embeddings"][0]["index"] == 0
+    assert body["embeddings"][0]["similarity_to_first"] is None
+    assert len(body["embeddings"][0]["embedding"]) == 512
+    assert body["embeddings"][0]["embedding"] == pytest.approx(vector.astype(float).tolist(), abs=1e-5)
+    assert rigged_client.app.state.vector_store.list_identities() == []
+
+
+def test_embed_multiple_same_face(rigged_client):
+    embedder = rigged_client.app.state.recognizer.embedder
+    base = _unit_vector(512, seed=11)
+    embedder.queue(base, _nudged(base, seed=12), _nudged(base, seed=13))
+
+    response = _embed(rigged_client, num_images=3)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["images_processed"] == 3
+    assert body["consistency_checked"] is True
+    assert body["consistency_threshold"] == 0.40
+    assert [item["index"] for item in body["embeddings"]] == [0, 1, 2]
+    assert body["embeddings"][1]["similarity_to_first"] >= body["consistency_threshold"]
+    assert body["embeddings"][2]["similarity_to_first"] >= body["consistency_threshold"]
+
+
+def test_embed_rejects_different_face(rigged_client):
+    embedder = rigged_client.app.state.recognizer.embedder
+    embedder.queue(_unit_vector(512, seed=11), _unit_vector(512, seed=99))
+
+    response = _embed(rigged_client, num_images=2)
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "inconsistent_images"
+    assert body["details"]["failed_indexes"] == [1]
+    assert body["details"]["comparisons"][0]["matched"] is False
+
+
+def test_embed_rejects_no_face_on_second_image(rigged_client):
+    detector = rigged_client.app.state.recognizer.detector
+    embedder = rigged_client.app.state.recognizer.embedder
+    detector.queue([_default_face()], [])
+    embedder.queue(_unit_vector(512, seed=11))
+
+    response = _embed(rigged_client, num_images=2)
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error_code"] == "no_face_detected"
+    assert body["details"]["image_index"] == 1
+    assert "image[1]:" in body["message"]
+
+
+def test_embed_rejects_multiple_faces(rigged_client):
+    rigged_client.app.state.recognizer.detector.faces_to_return = [_default_face(), _default_face()]
+
+    response = _embed(rigged_client, num_images=1)
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "multiple_faces_detected"
+
+
+def test_embed_from_urls(rigged_client, monkeypatch):
+    image_bytes = _encode_png(_valid_face_image())
+
+    async def fake_fetch(url, settings, **kwargs):
+        return image_bytes
+
+    monkeypatch.setattr("app.api.remote_image.fetch_remote_image", fake_fetch)
+
+    embedder = rigged_client.app.state.recognizer.embedder
+    base = _unit_vector(512, seed=11)
+    embedder.queue(base, _nudged(base, seed=12))
+
+    response = rigged_client.post(
+        "/api/v1/faces/embed",
+        data={
+            "image_urls": [
+                "https://my-bucket.s3.ap-south-1.amazonaws.com/a.jpg",
+                "https://my-bucket.s3.ap-south-1.amazonaws.com/b.jpg",
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["images_processed"] == 2
+    assert body["consistency_checked"] is True
+
+
+def test_embed_rejects_files_and_urls_together(rigged_client):
+    image_bytes = _encode_png(_valid_face_image())
+    response = rigged_client.post(
+        "/api/v1/faces/embed",
+        data={"image_urls": "https://my-bucket.s3.amazonaws.com/a.jpg"},
+        files={"images": ("a.png", image_bytes, "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "invalid_image_source"
+
+
+def test_embed_rejects_too_many_images(rigged_client):
+    rigged_client.app.state.embedding_service.max_images = 2
+    rigged_client.app.state.settings.embed_max_images = 2
+
+    response = _embed(rigged_client, num_images=3)
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error_code"] == "invalid_image_count"
+    assert body["details"]["max_images"] == 2

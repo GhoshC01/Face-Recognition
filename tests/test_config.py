@@ -7,6 +7,8 @@ def test_settings_defaults():
     settings = Settings(_env_file=None)
     assert settings.api_v1_prefix == "/api/v1"
     assert settings.embedding_dimension == 512
+    assert settings.embed_max_images == 10
+    assert settings.embed_consistency_threshold == 0.40
     assert settings.api_key_enabled is False
 
 

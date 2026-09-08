@@ -72,11 +72,26 @@ class PayloadTooLargeError(FaceServiceError):
 
 
 class InvalidImageSourceError(FaceServiceError):
-    """Raised when a compare image is missing, or both a file and a URL
+    """Raised when a compare/embed image is missing, or both a file and a URL
     were supplied for the same slot."""
 
     error_code = "invalid_image_source"
     http_status = 400
+
+
+class InvalidImageCountError(FaceServiceError):
+    """Raised when an embed request submits more images than the configured max."""
+
+    error_code = "invalid_image_count"
+    http_status = 400
+
+
+class InconsistentImagesError(FaceServiceError):
+    """Raised when a multi-image embed request's later images do not match
+    the first image closely enough to be treated as the same face."""
+
+    error_code = "inconsistent_images"
+    http_status = 422
 
 
 class CompareImagesError(FaceServiceError):

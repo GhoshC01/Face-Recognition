@@ -7,18 +7,21 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
 from app.api.deps import (
+    get_embedding_service,
     get_enrollment_service,
     get_evaluation_service,
     get_settings,
     get_verification_service,
     require_api_key,
 )
-from app.api.remote_image import resolve_image_bytes
+from app.api.remote_image import resolve_image_bytes, resolve_image_list
 from app.api.upload_validation import read_validated_upload
 from app.config.settings import Settings
 from app.core.exceptions import FaceServiceError, InvalidImageError
+from app.schemas.embedding import EmbedResponse
 from app.schemas.enrollment import EnrollmentResponse
 from app.schemas.verification import FaceCompareResponse, FaceVerificationResponse, MultiFrameVerificationResponse
+from app.services.embedding_service import EmbeddingService
 from app.services.enrollment_service import EnrollmentService
 from app.services.evaluation_service import EvaluationService, raise_if_compare_sides_failed
 from app.services.verification_service import VerificationService
@@ -163,4 +166,56 @@ async def compare_faces(
         logger.info(
             "compare_route_timings",
             extra={"receive_ms": receive_ms, "route_total_ms": sw.lap_ms() + receive_ms},
+        )
+
+
+@router.post("/embed", response_model=EmbedResponse)
+async def embed_faces(
+    images: list[UploadFile] | None = File(
+        default=None,
+        description="One or more face images as file uploads. Supply this or image_urls, not both.",
+    ),
+    image_urls: list[str] | None = Form(
+        default=None,
+        description="One or more public or S3 presigned HTTPS URLs. Supply this or images, not both.",
+    ),
+    settings: Settings = Depends(get_settings),
+    service: EmbeddingService = Depends(get_embedding_service),
+) -> EmbedResponse:
+    """Stateless embedding extraction. Accepts one image or several.
+
+    Each image must contain exactly one detectable face and pass quality
+    checks. When more than one image is sent, every later image is compared
+    against the first; if any pair falls below EMBED_CONSISTENCY_THRESHOLD
+    the request fails with `inconsistent_images` and no vectors are
+    returned. Nothing is enrolled or written to FAISS.
+    """
+    sw = Stopwatch()
+    raw_images = await resolve_image_list(
+        images,
+        image_urls,
+        settings,
+        max_images=settings.embed_max_images,
+    )
+    decoded = []
+    for index, raw in enumerate(raw_images):
+        try:
+            decoded.append(decode_image_bytes(raw))
+        except InvalidImageError as exc:
+            raise InvalidImageError(
+                f"image[{index}]: {exc.message}",
+                image_index=index,
+                **exc.details,
+            ) from exc
+    receive_ms = sw.lap_ms()
+    try:
+        return service.embed(decoded)
+    finally:
+        logger.info(
+            "embed_route_timings",
+            extra={
+                "images": len(decoded),
+                "receive_ms": receive_ms,
+                "route_total_ms": sw.lap_ms() + receive_ms,
+            },
         )

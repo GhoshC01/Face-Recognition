@@ -8,9 +8,15 @@ import httpx
 import pytest
 from fastapi import UploadFile
 
-from app.api.remote_image import assert_public_http_url, fetch_remote_image, resolve_image_bytes
+from app.api.remote_image import (
+    assert_public_http_url,
+    fetch_remote_image,
+    resolve_image_bytes,
+    resolve_image_list,
+)
 from app.config.settings import Settings
 from app.core.exceptions import (
+    InvalidImageCountError,
     InvalidImageSourceError,
     PayloadTooLargeError,
     RemoteImageFetchError,
@@ -193,3 +199,53 @@ def test_resolve_rejects_file_and_url_together():
 
     with pytest.raises(InvalidImageSourceError, match="not both"):
         _run(_go())
+
+
+def test_resolve_image_list_requires_files_or_urls():
+    async def _go():
+        await resolve_image_list(None, None, _settings(), max_images=5)
+
+    with pytest.raises(InvalidImageSourceError, match="images"):
+        _run(_go())
+
+
+def test_resolve_image_list_rejects_files_and_urls_together():
+    upload = UploadFile(filename="a.png", file=io.BytesIO(PNG_BYTES), headers={"content-type": "image/png"})
+
+    async def _go():
+        await resolve_image_list([upload], [S3_URL], _settings(), max_images=5)
+
+    with pytest.raises(InvalidImageSourceError, match="not both"):
+        _run(_go())
+
+
+def test_resolve_image_list_rejects_too_many_files():
+    uploads = [
+        UploadFile(filename=f"{i}.png", file=io.BytesIO(PNG_BYTES), headers={"content-type": "image/png"})
+        for i in range(3)
+    ]
+
+    async def _go():
+        await resolve_image_list(uploads, None, _settings(), max_images=2)
+
+    with pytest.raises(InvalidImageCountError) as exc_info:
+        _run(_go())
+    assert exc_info.value.details["image_count"] == 3
+
+
+def test_resolve_image_list_accepts_a_single_url_string():
+    async def _go():
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, content=PNG_BYTES, headers={"content-type": "image/png"})
+        )
+        async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
+            return await resolve_image_list(
+                None,
+                S3_URL,
+                _settings(),
+                max_images=5,
+                client=client,
+                resolve_ips=_public_ip,
+            )
+
+    assert _run(_go()) == [PNG_BYTES]

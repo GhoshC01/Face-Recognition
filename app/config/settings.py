@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     identification_similarity_threshold: float = 0.40
     identification_top_k: int = 5
 
+    # --- Stateless embedding extraction (`POST /faces/embed`) ---
+    embed_max_images: int = 10
+    # Cosine similarity floor: every later image must match image[0].
+    embed_consistency_threshold: float = 0.40
+
     # --- Enrollment ---
     enrollment_duplicate_policy: Literal["reject", "replace"] = "reject"
     # Raw enrollment photos are saved under <enrollment_images_dir>/<external_id>/<embedding_id>.jpg

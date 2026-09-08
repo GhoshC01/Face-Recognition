@@ -38,7 +38,7 @@ app/
 │       ├── health.py           # unversioned /health/live, /health/ready
 │       └── v1/
 │           ├── enrollment.py   # /api/v1/enrollment (single-image add/status/remove)
-│           ├── faces.py        # /api/v1/faces/enroll, /faces/verify, /faces/verify-multi
+│           ├── faces.py        # /api/v1/faces/enroll, /faces/verify, /faces/verify-multi, /faces/embed
 │           └── verification.py # /api/v1/verification
 ├── core/
 │   ├── detector.py              # SCRFD ONNX face detector -> boxes + 5-point landmarks
@@ -116,6 +116,7 @@ guidance, index backup/recovery, model versioning, and more detailed local testi
 | POST | `/faces/enroll` (form: `external_id`, `image1`, `image2`) | Initial enrollment: two images, cross-validated as the same person |
 | POST | `/faces/verify` (form: `file`, optional `external_id`) | **Main HRMS-facing endpoint** — Mode B (1:1) if `external_id` given, Mode A (1:N identify) if omitted |
 | POST | `/faces/verify-multi` (form: `files[]`, optional `external_id`, `debug`) | Multi-frame verification for webcam capture — see below |
+| POST | `/faces/embed` (form: `images[]` or `image_urls[]`) | Stateless embedding extraction — one or more images; multi-image requests must be the same face |
 | POST | `/verification/verify` (form: `external_id`, `file`) | 1:1 verify — returns `PASS`/`FAIL` |
 | POST | `/verification/identify` (form: `file`, optional `top_k`) | 1:N search across all enrolled identities |
 | POST | `/verification/compare` (form: `file_a`, `file_b`) | Stateless 1:1 compare, no enrollment needed |
@@ -128,6 +129,29 @@ Unversioned, for infra probes:
 | GET | `/health/ready` | Readiness (models loaded + vector store reachable) |
 
 Interactive docs: `http://localhost:8000/docs`.
+
+### Example: extract embeddings (`/faces/embed`)
+
+Stateless: images in, L2-normalized vectors out. Nothing is enrolled or written to FAISS.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/faces/embed \
+  -F "images=@front.jpg" \
+  -F "images=@angle.jpg"
+```
+
+Remote URLs work the same way (`image_urls` instead of `images`, not both):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/faces/embed \
+  -F "image_urls=https://example.com/a.jpg" \
+  -F "image_urls=https://example.com/b.jpg"
+```
+
+- **1 image** — returns that embedding. No same-face check.
+- **2+ images** — every later image is compared against the first (cosine similarity ≥ `EMBED_CONSISTENCY_THRESHOLD`, default `0.40`). One mismatch returns `inconsistent_images` (422) and **no** embeddings.
+- Each image must contain exactly one face and pass the same quality gate as enroll/verify.
+- At most `EMBED_MAX_IMAGES` (default 10) images per request.
 
 ### Example: initial enrollment (two images)
 

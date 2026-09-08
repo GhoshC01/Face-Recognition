@@ -7,6 +7,7 @@ from app.core.detector import FaceDetector
 from app.core.embedding import FaceEmbedder
 from app.core.recognizer import FaceRecognizer
 from app.core.vector_store import VectorStore
+from app.services.embedding_service import EmbeddingService
 from app.services.enrollment_service import EnrollmentService
 from app.services.evaluation_service import EvaluationService
 from app.services.verification_service import VerificationService
@@ -42,6 +43,10 @@ def get_verification_service(request: Request) -> VerificationService:
 
 def get_evaluation_service(request: Request) -> EvaluationService:
     return request.app.state.evaluation_service
+
+
+def get_embedding_service(request: Request) -> EmbeddingService:
+    return request.app.state.embedding_service
 
 
 def require_api_key(request: Request, x_api_key: str | None = Header(default=None)) -> None:
