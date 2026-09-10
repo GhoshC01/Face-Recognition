@@ -646,6 +646,24 @@ def test_compare_embedding_rejects_invalid_json(rigged_client):
     assert response.json()["error_code"] == "invalid_embedding"
 
 
+def test_compare_embedding_accepts_ssms_hex(rigged_client):
+    import json
+
+    embedder = rigged_client.app.state.recognizer.embedder
+    base = _unit_vector(512, seed=1)
+    embedder.queue(_nudged(base, seed=2))
+    hex_payload = "0x" + json.dumps(base.tolist()).encode("utf-8").hex()
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": hex_payload},
+        files={"image": ("probe.png", _encode_png(_valid_face_image()), "image/png")},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "Match"
+
+
 def test_verify_multi_rejects_invalid_frame_count(rigged_client):
     response = _verify_multi(rigged_client, num_frames=1, external_id="EMP001")
 

@@ -48,9 +48,22 @@ def _try_decode(raw: bytes):
 
 
 def _parse_embedding_form(raw: str) -> np.ndarray:
-    """Parse a multipart form field that holds a JSON array of floats."""
+    """Parse a multipart form field that holds a JSON array of floats.
+
+    Accepts plain JSON (`[-0.08, ...]`) or the SSMS-style hex of that same
+    JSON text (`0x5B2D302E...`).
+    """
+    text = raw.strip()
+    if text.lower().startswith("0x"):
+        hex_body = text[2:]
+        try:
+            text = bytes.fromhex(hex_body).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise InvalidEmbeddingError(
+                "embedding hex must be a 0x-prefixed encoding of a JSON array"
+            ) from exc
     try:
-        values = json.loads(raw)
+        values = json.loads(text)
     except json.JSONDecodeError as exc:
         raise InvalidEmbeddingError("embedding must be a JSON array of numbers") from exc
     if not isinstance(values, list) or not values:
@@ -194,7 +207,10 @@ async def compare_faces(
 async def compare_face_with_embedding(
     embedding: str = Form(
         ...,
-        description="JSON array of floats — a face embedding (same dimension as EMBEDDING_DIMENSION).",
+        description=(
+            "Face embedding as a JSON float array, or the same JSON as SSMS-style "
+            "hex (0x5B2D...). Length must match EMBEDDING_DIMENSION."
+        ),
     ),
     image: UploadFile = File(..., description="Face image to compare against the supplied embedding."),
     settings: Settings = Depends(get_settings),
