@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import httpx
+import numpy as np
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
 from app.api.deps import (
@@ -17,10 +19,15 @@ from app.api.deps import (
 from app.api.remote_image import resolve_image_bytes, resolve_image_list
 from app.api.upload_validation import read_validated_upload
 from app.config.settings import Settings
-from app.core.exceptions import FaceServiceError, InvalidImageError
+from app.core.exceptions import FaceServiceError, InvalidEmbeddingError, InvalidImageError
 from app.schemas.embedding import EmbedResponse
 from app.schemas.enrollment import EnrollmentResponse
-from app.schemas.verification import FaceCompareResponse, FaceVerificationResponse, MultiFrameVerificationResponse
+from app.schemas.verification import (
+    FaceCompareEmbeddingResponse,
+    FaceCompareResponse,
+    FaceVerificationResponse,
+    MultiFrameVerificationResponse,
+)
 from app.services.embedding_service import EmbeddingService
 from app.services.enrollment_service import EnrollmentService
 from app.services.evaluation_service import EvaluationService, raise_if_compare_sides_failed
@@ -38,6 +45,20 @@ def _try_decode(raw: bytes):
         return decode_image_bytes(raw), None
     except InvalidImageError as exc:
         return None, exc
+
+
+def _parse_embedding_form(raw: str) -> np.ndarray:
+    """Parse a multipart form field that holds a JSON array of floats."""
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise InvalidEmbeddingError("embedding must be a JSON array of numbers") from exc
+    if not isinstance(values, list) or not values:
+        raise InvalidEmbeddingError("embedding must be a non-empty JSON array of numbers")
+    try:
+        return np.asarray(values, dtype=np.float32)
+    except (TypeError, ValueError) as exc:
+        raise InvalidEmbeddingError("embedding must be a JSON array of numbers") from exc
 
 
 @router.post("/enroll", response_model=EnrollmentResponse, status_code=status.HTTP_201_CREATED)
@@ -165,6 +186,40 @@ async def compare_faces(
     finally:
         logger.info(
             "compare_route_timings",
+            extra={"receive_ms": receive_ms, "route_total_ms": sw.lap_ms() + receive_ms},
+        )
+
+
+@router.post("/compare-embedding", response_model=FaceCompareEmbeddingResponse)
+async def compare_face_with_embedding(
+    embedding: str = Form(
+        ...,
+        description="JSON array of floats — a face embedding (same dimension as EMBEDDING_DIMENSION).",
+    ),
+    image: UploadFile = File(..., description="Face image to compare against the supplied embedding."),
+    settings: Settings = Depends(get_settings),
+    service: EvaluationService = Depends(get_evaluation_service),
+) -> FaceCompareEmbeddingResponse:
+    """Stateless 1:1 compare: supplied embedding vs one image.
+
+    Embeds the image (exactly one face, same live-capture quality gate as
+    compare's image2), then cosine-compares against the given vector.
+    Returns Match / Not matching + confidence like `/faces/compare`.
+    Nothing is enrolled or written to FAISS.
+    """
+    sw = Stopwatch()
+    reference = _parse_embedding_form(embedding)
+    decoded = decode_image_bytes(await read_validated_upload(image, settings))
+    receive_ms = sw.lap_ms()
+    try:
+        return service.compare_with_embedding(
+            reference,
+            decoded,
+            expected_dimension=settings.embedding_dimension,
+        )
+    finally:
+        logger.info(
+            "compare_embedding_route_timings",
             extra={"receive_ms": receive_ms, "route_total_ms": sw.lap_ms() + receive_ms},
         )
 

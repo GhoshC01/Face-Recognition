@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from app.core.exceptions import (
     CompareImagesError,
     IdentityNotFoundError,
+    InvalidEmbeddingError,
     LowImageQualityError,
     NoFaceDetectedError,
 )
@@ -114,6 +116,40 @@ def test_evaluation_service_compare_pair_returns_match_and_confidence(recognizer
     assert different_face.status == "Not matching"
     assert different_face.matched is False
     assert different_face.confidence < different_face.threshold
+
+
+def test_compare_with_embedding_returns_match_and_confidence(recognizer):
+    evaluation = EvaluationService(recognizer=recognizer, similarity_threshold=0.99)
+    reference = recognizer.process(make_synthetic_image(7)).embedding
+
+    same_face = evaluation.compare_with_embedding(
+        reference, make_synthetic_image(7), expected_dimension=recognizer.dimension
+    )
+    different_face = evaluation.compare_with_embedding(
+        reference, make_synthetic_image(42), expected_dimension=recognizer.dimension
+    )
+
+    assert same_face.status == "Match"
+    assert same_face.matched is True
+    assert same_face.confidence >= same_face.threshold
+    assert same_face.image.detection_score > 0
+
+    assert different_face.status == "Not matching"
+    assert different_face.matched is False
+    assert different_face.confidence < different_face.threshold
+
+
+def test_compare_with_embedding_rejects_wrong_dimension(recognizer):
+    evaluation = EvaluationService(recognizer=recognizer, similarity_threshold=0.99)
+    bad = np.ones(4, dtype=np.float32)
+
+    with pytest.raises(InvalidEmbeddingError) as caught:
+        evaluation.compare_with_embedding(
+            bad, make_synthetic_image(7), expected_dimension=recognizer.dimension
+        )
+
+    assert caught.value.details["expected_dimension"] == recognizer.dimension
+    assert caught.value.details["actual_dimension"] == 4
 
 
 def test_compare_pair_names_image1_when_only_first_fails():

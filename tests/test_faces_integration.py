@@ -577,6 +577,75 @@ def test_compare_missing_both_images_returns_400(client):
     assert response.json()["error_code"] == "invalid_image_source"
 
 
+# --- embedding vs image compare ---
+
+
+def test_compare_embedding_same_person_returns_match(rigged_client):
+    import json
+
+    embedder = rigged_client.app.state.recognizer.embedder
+    base = _unit_vector(512, seed=1)
+    embedder.queue(_nudged(base, seed=2))
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": json.dumps(base.tolist())},
+        files={"image": ("probe.png", _encode_png(_valid_face_image()), "image/png")},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "Match"
+    assert body["matched"] is True
+    assert body["confidence"] >= body["threshold"]
+    assert "image" in body
+    assert "detection_score" in body["image"]
+
+
+def test_compare_embedding_different_person_returns_not_matching(rigged_client):
+    import json
+
+    embedder = rigged_client.app.state.recognizer.embedder
+    reference = _unit_vector(512, seed=1)
+    embedder.queue(_unit_vector(512, seed=99))
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": json.dumps(reference.tolist())},
+        files={"image": ("probe.png", _encode_png(_valid_face_image()), "image/png")},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "Not matching"
+    assert body["matched"] is False
+    assert body["confidence"] < body["threshold"]
+
+
+def test_compare_embedding_rejects_wrong_dimension(rigged_client):
+    import json
+
+    response = rigged_client.post(
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": json.dumps([0.1, 0.2, 0.3])},
+        files={"image": ("probe.png", _encode_png(_valid_face_image()), "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "invalid_embedding"
+
+
+def test_compare_embedding_rejects_invalid_json(rigged_client):
+    response = rigged_client.post(
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": "not-json"},
+        files={"image": ("probe.png", _encode_png(_valid_face_image()), "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "invalid_embedding"
+
+
 def test_verify_multi_rejects_invalid_frame_count(rigged_client):
     response = _verify_multi(rigged_client, num_frames=1, external_id="EMP001")
 

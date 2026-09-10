@@ -113,9 +113,8 @@ class RemoteImageFetchError(FaceServiceError):
 
 class InvalidEmbeddingError(FaceServiceError):
     """Raised when a vector cannot be treated as a valid face embedding --
-    wrong shape, NaN/Inf values, or near-zero magnitude. Distinct from
-    ModelNotReadyError: this signals a bad vector produced during inference,
-    not a missing/misconfigured model."""
+    wrong shape, NaN/Inf values, near-zero magnitude, or a caller-supplied
+    embedding that fails validation. Distinct from ModelNotReadyError."""
 
     error_code = "invalid_embedding"
-    http_status = 500
+    http_status = 400

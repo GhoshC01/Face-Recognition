@@ -5,15 +5,22 @@ import numpy as np
 from app.core.exceptions import (
     CompareImagesError,
     FaceServiceError,
+    InvalidEmbeddingError,
     InvalidImageError,
     LowImageQualityError,
     MultipleFacesDetectedError,
     NoFaceDetectedError,
 )
+from app.core.normalization import l2_normalize
 from app.core.quality import QualityChecker, lenient_quality_thresholds
 from app.core.recognizer import FaceEmbeddingResult, FaceRecognizer
 from app.schemas.common import quality_result_to_schema
-from app.schemas.verification import CompareResponse, FaceCompareImageSchema, FaceCompareResponse
+from app.schemas.verification import (
+    CompareResponse,
+    FaceCompareEmbeddingResponse,
+    FaceCompareImageSchema,
+    FaceCompareResponse,
+)
 
 # Per-image failures that should be attributed to image1/image2 rather than
 # aborting the whole compare on the first side. Service-level errors
@@ -165,5 +172,49 @@ class EvaluationService:
             image2=FaceCompareImageSchema(
                 detection_score=result2.detection_score,
                 quality=quality_result_to_schema(result2.quality),
+            ),
+        )
+
+    def compare_with_embedding(
+        self,
+        embedding: np.ndarray,
+        image,
+        *,
+        expected_dimension: int,
+    ) -> FaceCompareEmbeddingResponse:
+        """Compare a caller-supplied embedding against one image.
+
+        Same threshold and Match / Not matching outcome as `compare_pair`.
+        The image uses the live-capture (image2) quality gate. The supplied
+        vector is L2-normalized and must match `expected_dimension`.
+        """
+        vector = np.asarray(embedding, dtype=np.float32)
+        if vector.ndim != 1 or vector.shape[0] != expected_dimension:
+            raise InvalidEmbeddingError(
+                f"embedding must be a 1-D vector of length {expected_dimension}",
+                expected_dimension=expected_dimension,
+                actual_dimension=int(vector.shape[0]) if vector.ndim == 1 else None,
+                shape=list(vector.shape),
+            )
+        reference = l2_normalize(vector)
+
+        result, error = self._process_side(
+            image, strict_single_face=True, quality_checker=self.quality_checker
+        )
+        if error is not None:
+            raise error
+        assert result is not None
+
+        confidence = float(np.dot(reference, result.embedding))
+        matched = confidence >= self.similarity_threshold
+
+        return FaceCompareEmbeddingResponse(
+            matched=matched,
+            status="Match" if matched else "Not matching",
+            confidence=confidence,
+            threshold=self.similarity_threshold,
+            image=FaceCompareImageSchema(
+                detection_score=result.detection_score,
+                quality=quality_result_to_schema(result.quality),
             ),
         )

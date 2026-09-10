@@ -61,6 +61,22 @@ class FaceCompareResponse(BaseModel):
     processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class FaceCompareEmbeddingResponse(BaseModel):
+    """Response for POST /api/v1/faces/compare-embedding.
+
+    Stateless comparison of a supplied embedding against one image.
+    Same Match / Not matching envelope as `/faces/compare`; only the image
+    side has detection/quality diagnostics.
+    """
+
+    matched: bool
+    status: Literal["Match", "Not matching"]
+    confidence: float
+    threshold: float
+    image: FaceCompareImageSchema
+    processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class FaceVerificationResponse(BaseModel):
     """Response for POST /api/v1/faces/verify.
 
