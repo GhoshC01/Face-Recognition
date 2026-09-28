@@ -56,7 +56,6 @@ class Settings(BaseSettings):
     embedding_dimension: int = 512
     verification_similarity_threshold: float = 0.36
     identification_similarity_threshold: float = 0.40
-    identification_top_k: int = 5
 
     # --- Stateless embedding extraction (`POST /faces/embed`) ---
     embed_max_images: int = 10

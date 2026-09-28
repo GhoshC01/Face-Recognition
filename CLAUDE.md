@@ -53,12 +53,6 @@ pytest -k "enrollment"              # নাম-ম্যাচ দিয়ে
 ```
 টেস্ট চালাতে real ONNX model লাগে না — `tests/conftest.py`-এর `FakeRecognizer` marker-byte দিয়ে deterministic fake embedding বানায়, তাই service/route লেভেলের টেস্ট real ONNX Runtime ছাড়াই চলে।
 
-### Docker
-```bash
-export FACE_API_KEY="local-testing-key-change-me"   # docker-compose.yml-এ এটা required
-docker compose up --build
-```
-
 ### Offline accuracy benchmark (endpoint না, CLI tool)
 ```bash
 python scripts/run_benchmark.py --dataset path/to/manifest.json
@@ -133,21 +127,12 @@ Image decode করার **আগে** HTTP-লেভেলে চেক কর
 `/health/live` (সবসময় 200, process বেঁচে আছে কিনা) আর `/health/ready` (detector+embedder loaded + vector store ready — নাহলে 503)। Docker `HEALTHCHECK` আর k8s readiness probe এটাই ব্যবহার করে।
 
 ### `app/api/routes/v1/faces.py` — **মূল ইউজার-ফেসিং endpoints**
-- `POST /faces/enroll` — **প্রাথমিক enrollment, দুটো ছবি বাধ্যতামূলক** (`image1`, `image2`)। দুটোতেই exactly একটা face থাকতে হবে, quality gate পাস করতে হবে, আর দুটোর মধ্যে cosine similarity ≥ `ENROLLMENT_MIN_IMAGE_SIMILARITY` (একই মানুষ কিনা চেক)।
-- `POST /faces/verify` — HRMS-এর main endpoint। `external_id` দিলে Mode B (1:1 verify), না দিলে Mode A (1:N identify)। **exactly একটা face লাগবে** (একাধিক face পেলে 422)।
-- `POST /faces/verify-multi` — webcam multi-frame consensus verification (নিচে flow সেকশনে বিস্তারিত)।
+- `POST /faces/enroll` — একটা ছবি (`image`) + `external_id`। exactly একটা face, quality gate পাস করতে হবে।
+- `POST /faces/verify` — `external_id` দিলে Mode B (1:1 verify), না দিলে Mode A (1:N identify)। **exactly একটা face লাগবে** (একাধিক face পেলে 422)।
+- `POST /faces/verify-multi` — webcam multi-frame consensus verification।
+- `POST /faces/compare`, `POST /faces/compare-embedding`, `POST /faces/embed` — stateless; FAISS-এ লেখে না।
 
-### `app/api/routes/v1/enrollment.py` — **সেকেন্ডারি enrollment API**
-- `POST /enrollment` (form: `external_id`, `file`) — **একটামাত্র ছবি** দিয়ে enroll/add-more-embedding। ইতিমধ্যে enrolled কারো নতুন angle যোগ করতে ব্যবহার হয়।
-- `GET /enrollment/{external_id}` — enrolled কিনা, কয়টা embedding আছে।
-- `DELETE /enrollment/{external_id}` — সব embedding মুছে দেয়, **আর সেই identity-র saved photo folder-ও মুছে দেয়** (নতুন behavior, নিচে দেখুন)।
-
-### `app/api/routes/v1/verification.py` — **"Legacy"/generic primitives**
-- `POST /verification/verify` — 1:1, PASS/FAIL।
-- `POST /verification/identify` — 1:N, `top_k` matches লিস্ট রিটার্ন করে।
-- `POST /verification/compare` — দুটো ছবি stateless compare, কোনো enrollment/storage ছাড়াই।
-
-`faces.py`-এর endpoint গুলো `strict_single_face=True` ব্যবহার করে (ambiguous frame কখনো silently resolve করা যাবে না, যেহেতু এটাই primary attendance-capture path), আর `verification.py`-এর গুলো `strict_single_face=False` (একাধিক face পেলে সবচেয়ে বড়টা বেছে নেয়) — এটা ইচ্ছাকৃত, ডকুমেন্টেড পার্থক্য।
+`faces.py`-এর endpoint গুলো `strict_single_face=True` ব্যবহার করে (ambiguous frame কখনো silently resolve করা যাবে না, যেহেতু এটাই primary attendance-capture path)। HTTP API শুধু `/api/v1/faces` — আলাদা `/enrollment` বা `/verification` রাউট নেই।
 
 ### `app/core/detector.py` — SCRFD face detector (ONNX wrapper)
 `FaceDetector.detect(image) -> list[Face]`। প্রতিটা `Face`-এ box (x1,y1,x2,y2), confidence score, আর 5-point landmarks। Letterbox-resize + custom NMS দিয়ে raw ONNX আউটপুট থেকে face box বের করে। Model file miss করলে `ModelNotReadyError`।
@@ -174,13 +159,13 @@ Image decode করার **আগে** HTTP-লেভেলে চেক কর
 সব domain error-এর কেন্দ্রীয় hierarchy — প্রতিটার নিজস্ব `error_code` আর `http_status`। যেমন: `NoFaceDetectedError` (422), `LowImageQualityError` (422), `IdentityNotFoundError` (404), `IdentityAlreadyExistsError` (409), `ModelNotReadyError` (503)।
 
 ### `app/services/enrollment_service.py`
-`EnrollmentService` — `enroll()` (single image, add embedding) আর `enroll_pair()` (দুই-ছবি প্রাথমিক enrollment, cross-validate করে দুটো একই মানুষ কিনা)। `duplicate_policy` (`reject`/`replace`) আর rollback logic (দ্বিতীয় FAISS write fail করলে প্রথমটাও রোলব্যাক)। **নতুন**: `images_dir` parameter — সেট করা থাকলে প্রতিটা accepted enrollment ছবি ডিস্কে সেভ করে (নিচে বিস্তারিত)।
+`EnrollmentService` — `enroll_initial()` (একটা ছবি, `POST /faces/enroll`)। `duplicate_policy` (`reject`/`replace`)। `images_dir` সেট থাকলে accepted ছবি ডিস্কে সেভ হয়।
 
 ### `app/services/verification_service.py`
-`VerificationService` — `verify_or_identify()` (প্রধান `/faces/verify`-এর লজিক, strict single-face), `verify_multi_frame()` (multi-frame consensus, নিচে flow সেকশনে), `verify()`/`identify()` (legacy endpoints, lenient face selection)।
+`VerificationService` — `verify_or_identify()` (প্রধান `/faces/verify`-এর লজিক, strict single-face), `verify_multi_frame()` (multi-frame consensus)।
 
 ### `app/services/evaluation_service.py`
-`EvaluationService.compare(image_a, image_b)` — stateless, কোনো FAISS/enrollment ছাড়াই দুটো ছবির embedding সরাসরি compare করে।
+`EvaluationService.compare_pair()` আর `compare_with_embedding()` — stateless, কোনো FAISS/enrollment ছাড়াই compare করে।
 
 ### `app/evaluation/*` — অফলাইন accuracy measurement (production থেকে সম্পূর্ণ আলাদা)
 - `dataset.py` — labeled gallery+probe JSON manifest লোড করে।
@@ -204,15 +189,9 @@ Contextvar-ভিত্তিক request-id — middleware, error handler, আ�
 - `run_benchmark.py` — offline accuracy benchmark CLI।
 - `purge_stale_enrollments.py` — retention/minimization tool, পুরনো enrollment লিস্ট/মুছে দেয় (এখন ছবির folder-ও মুছে দেয়)।
 
-### Docker ফাইল
-- `Dockerfile` — two-stage (builder + runtime), non-root user, models/storage কখনো bake-in হয় না।
-- `docker-compose.yml` — local single-instance, `FACE_API_KEY` required, models read-only mount, storage named volume।
-- `docker/entrypoint.sh` — production ASGI startup (`uvicorn` exec, graceful shutdown)।
-
 ### Docs
 - `README.md` — পূর্ণাঙ্গ API reference + উদাহরণ।
 - `SECURITY.md` — auth, upload validation, CORS, rate limiting, logging invariant, biometric data minimization।
-- `docs/deployment.md` — Docker/production deployment গাইড।
 - `docs/final-architecture-review.md` — evidence-based production-readiness review।
 - `docs/hrms-integration-plan.md` — ভবিষ্যতের HRMS integration পরিকল্পনা (এখনো implement হয়নি)।
 
@@ -245,10 +224,7 @@ Contextvar-ভিত্তিক request-id — middleware, error handler, আ�
 5. Response: success, external_id, images_processed=2, image_similarity, প্রতিটা ছবির detection_score+quality
 ```
 
-### 2) Enrollment flow — একটামাত্র ছবি (`POST /api/v1/enrollment`)
-একই pipeline (ধাপ 2-4-খ পর্যন্ত), শুধু একটা ছবি, cross-validation নেই। ইতিমধ্যে enrolled কারো নতুন angle/embedding যোগ করার জন্য।
-
-### 3) Verification/Identification flow (`POST /api/v1/faces/verify`)
+### 2) Verification/Identification flow (`POST /api/v1/faces/verify`)
 
 ```
 1. Client পাঠায়: file, (optional) external_id
@@ -267,11 +243,11 @@ Contextvar-ভিত্তিক request-id — middleware, error handler, আ�
 5. Response: verified, status (PASS/FAIL), external_id, similarity, threshold, mode, detection_score, quality
 ```
 
-### 4) Multi-frame consensus verification (`POST /api/v1/faces/verify-multi`)
+### 3) Multi-frame consensus verification (`POST /api/v1/faces/verify-multi`)
 
 ```
 1. Client পাঠায় কয়েকটা frame (৩-৫টা, webcam capture)
-2. প্রতিটা frame আলাদাভাবে ৩নং flow-এর মতোই প্রসেস হয় (strict_single_face=True)
+2. প্রতিটা frame আলাদাভাবে verify flow-এর মতোই প্রসেস হয় (strict_single_face=True)
    - কোনো frame decode fail / no-face / multiple-face / low-quality হলে
      সেই frame শুধু বাদ পড়ে (rejection_reason সহ) - পুরো request fail হয় না
 3. MULTI_FRAME_MIN_VALID_FRAMES (ডিফল্ট ২)-র কম valid frame থাকলে
@@ -284,13 +260,6 @@ Contextvar-ভিত্তিক request-id — middleware, error handler, আ�
    consensus_ratio >= MULTI_FRAME_CONSENSUS_RATIO (ডিফল্ট 0.6)
    (একটামাত্র শক্তিশালী frame কখনো একাই PASS আনতে পারবে না)
 7. debug=true দিলে response-এ প্রতিটা frame-এর diagnostic থাকবে
-```
-
-### 5) Enrollment removal flow (`DELETE /api/v1/enrollment/{external_id}`)
-```
-1. vector_store.has_identity() চেক - না থাকলে IdentityNotFoundError (404)
-2. vector_store.remove_embedding() - সব embedding + metadata entry মুছে যায়
-3. [নতুন] images/{external_id}/ পুরো ফোল্ডার মুছে যায় (best-effort)
 ```
 
 ---
@@ -308,7 +277,7 @@ images/<external_id>/<embedding_id>.jpg
 - **Best-effort, non-blocking**: disk full/permission error হলে শুধু warning log হয় (`enrollment_image_save_failed`), enrollment response-এ কোনো প্রভাব পড়ে না — কারণ FAISS-ই সত্যিকারের source of truth, এই ছবি শুধু audit/debug copy।
 - `EnrollmentService.__init__`-এ `images_dir` **default `None`** — মানে ফিচারটা opt-in, existing unit test-গুলো এই parameter না দিলে আগের মতো কোনো ফাইল লেখে না। শুধু `app/main.py` real app চালানোর সময় `settings.enrollment_images_dir` থেকে wire করে।
 - বন্ধ করতে চাইলে: `.env`-এ `ENROLLMENT_IMAGES_DIR=` (খালি) সেট করুন।
-- **cleanup সবসময় sync করা আছে**: `DELETE /api/v1/enrollment/{id}` আর `scripts/purge_stale_enrollments.py --delete` — দুটোই identity মুছলে তার photo folder-ও মুছে দেয়।
+- **cleanup**: `scripts/purge_stale_enrollments.py --delete` identity মুছলে তার photo folder-ও মুছে দেয়। HTTP delete রাউট নেই।
 - `.gitignore`-এ `images/*` (except `.gitkeep`) ইগনোর করা আছে — real ছবি কখনো git-এ কমিট হবে না।
 - **নথিভুক্ত trade-off**: `SECURITY.md`-এর "Biometric data minimization" সেকশন এই behavior প্রতিফলিত করার জন্য আপডেট করা হয়েছে (আগে লেখা ছিল "raw image কখনো retain হয় না" — এখন সেটা আর সত্যি না, তাই ডকুমেন্টেশন mismatch এড়াতে আপডেট করা হয়েছে)।
 

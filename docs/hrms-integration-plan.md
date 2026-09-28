@@ -61,11 +61,9 @@ scratch (barring anything identified in section 8).
 
 | Use case | Method & path | Notes |
 |---|---|---|
-| Initial enrollment (onboarding) | `POST /api/v1/faces/enroll` | Two images, cross-validated as the same person. See `README.md` → "Initial enrollment". |
-| Add a single additional embedding later | `POST /api/v1/enrollment` | e.g. re-enrolling one new angle without redoing the full two-image flow. |
+| Enroll a face | `POST /api/v1/faces/enroll` | One image, opaque `external_id`. |
 | **Attendance-time verification (primary)** | `POST /api/v1/faces/verify` | The endpoint HRMS is expected to call at attendance-capture time. Supports both identity-known and identity-unknown flows in one call. |
-| Check enrollment status | `GET /api/v1/enrollment/{external_id}` | Useful for HRMS to confirm an employee is enrolled before prompting for a capture. |
-| Remove enrollment (offboarding) | `DELETE /api/v1/enrollment/{external_id}` | HRMS-triggered cleanup when an employee record is deactivated. |
+| Remove a stale enrollment | `scripts/purge_stale_enrollments.py --delete` | Operator cleanup when an identity should no longer be enrolled. There is no HTTP delete route. |
 | Liveness / readiness | `GET /health/live`, `GET /health/ready` | For HRMS's own health-check/monitoring wiring, and for confirming the service is ready (models loaded) before routing real traffic to it. |
 
 `POST /api/v1/faces/verify` is the one endpoint the future HRMS attendance flow is expected to
@@ -206,9 +204,9 @@ located at that time.
       there's a tracing system (e.g. OpenTelemetry) that a `request_id` should be attached to.
 - [ ] Existing employee enrollment/onboarding workflow (UI and/or admin flow) — where the two
       enrollment images (`/faces/enroll`) would actually be captured/uploaded from.
-- [ ] Existing employee offboarding workflow — where `DELETE /api/v1/enrollment/{external_id}`
-      should be triggered to keep FAISS from retaining embeddings for departed employees.
-- [ ] Existing infra/deployment config (docker-compose, k8s manifests, env/config files) — to
+- [ ] Existing employee offboarding workflow — where an operator should run
+      `scripts/purge_stale_enrollments.py --delete` so FAISS does not retain embeddings for departed employees.
+- [ ] Existing infra/deployment config (env/config files) — to
       determine how the FaceVerification service's base URL and API key will be provided to HRMS
       at runtime, and whether network policy needs updating to allow the connection.
 - [ ] Existing rate-limiting/throttling layer, if any — to decide whether HRMS needs to protect

@@ -37,9 +37,7 @@ app/
 │   └── routes/
 │       ├── health.py           # unversioned /health/live, /health/ready
 │       └── v1/
-│           ├── enrollment.py   # /api/v1/enrollment (single-image add/status/remove)
-│           ├── faces.py        # /api/v1/faces/enroll, /faces/verify, /faces/verify-multi, /faces/embed
-│           └── verification.py # /api/v1/verification
+│           └── faces.py        # /api/v1/faces/enroll, /verify, /verify-multi, /compare, /compare-embedding, /embed
 ├── core/
 │   ├── detector.py              # SCRFD ONNX face detector -> boxes + 5-point landmarks
 │   ├── alignment.py              # 5-point similarity-transform warp to a configurable, model-sized crop
@@ -89,37 +87,18 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Without the ONNX model files present, the service still starts: `/health/live` returns 200, but
-`/health/ready` returns 503 until both models load successfully. This lets you deploy the
-container and run infra checks before models are mounted, while still failing readiness probes
-correctly.
-
-## Running with Docker
-
-```bash
-export FACE_API_KEY="local-testing-key-change-me"   # docker-compose.yml requires this to be set
-# place real det_500m.onnx / w600k_mbf.onnx under models/ first
-docker compose up --build
-```
-
-See [`docs/deployment.md`](docs/deployment.md) for the full picture: image structure, mounting vs.
-baking in models, persisting the FAISS index/metadata as a volume, health checks, production ASGI
-startup (`WEB_CONCURRENCY`, `FORWARDED_ALLOW_IPS`, the CPU-bound concurrency model), CPU/RAM sizing
-guidance, index backup/recovery, model versioning, and more detailed local testing instructions.
+`/health/ready` returns 503 until both models load successfully.
 
 ## API overview (`/api/v1`)
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/enrollment` (form: `external_id`, `file`) | Enroll a single face image for an identity |
-| GET | `/enrollment/{external_id}` | Enrollment status |
-| DELETE | `/enrollment/{external_id}` | Remove all enrolled embeddings for an identity |
-| POST | `/faces/enroll` (form: `external_id`, `image1`, `image2`) | Initial enrollment: two images, cross-validated as the same person |
-| POST | `/faces/verify` (form: `file`, optional `external_id`) | **Main HRMS-facing endpoint** — Mode B (1:1) if `external_id` given, Mode A (1:N identify) if omitted |
-| POST | `/faces/verify-multi` (form: `files[]`, optional `external_id`, `debug`) | Multi-frame verification for webcam capture — see below |
-| POST | `/faces/embed` (form: `images[]` or `image_urls[]`) | Stateless embedding extraction — one or more images; multi-image requests must be the same face |
-| POST | `/verification/verify` (form: `external_id`, `file`) | 1:1 verify — returns `PASS`/`FAIL` |
-| POST | `/verification/identify` (form: `file`, optional `top_k`) | 1:N search across all enrolled identities |
-| POST | `/verification/compare` (form: `file_a`, `file_b`) | Stateless 1:1 compare, no enrollment needed |
+| POST | `/faces/enroll` (form: `external_id`, `image`) | Enroll one face image for an identity |
+| POST | `/faces/verify` (form: `file`, optional `external_id`) | Mode B (1:1) if `external_id` given, Mode A (1:N identify) if omitted |
+| POST | `/faces/verify-multi` (form: `files[]`, optional `external_id`, `debug`) | Multi-frame verification for webcam capture |
+| POST | `/faces/compare` (files or URLs) | Stateless 1:1 compare of two images |
+| POST | `/faces/compare-embedding` (form: `embedding`, `image`) | Stateless compare of one image against a supplied embedding |
+| POST | `/faces/embed` (form: `images[]` or `image_urls[]`) | Stateless embedding extraction |
 
 Unversioned, for infra probes:
 
@@ -153,52 +132,36 @@ curl -X POST http://localhost:8000/api/v1/faces/embed \
 - Each image must contain exactly one face and pass the same quality gate as enroll/verify.
 - At most `EMBED_MAX_IMAGES` (default 10) images per request.
 
-### Example: initial enrollment (two images)
+### Example: enrollment (`/faces/enroll`)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/faces/enroll \
   -F "external_id=EMP001" \
-  -F "image1=@front.jpg" \
-  -F "image2=@side.jpg"
+  -F "image=@front.jpg"
 ```
 
 ```json
 {
-  "success": true,
   "external_id": "EMP001",
-  "images_processed": 2,
-  "enrollment_status": "success",
-  "image_similarity": 0.82,
-  "images": [
-    {"image": "image1", "embedding_id": 0, "detection_score": 0.99, "quality": {"accepted": true, "quality_score": 0.93, "reasons": [], "metrics": {"...": "..."}}},
-    {"image": "image2", "embedding_id": 1, "detection_score": 0.98, "quality": {"accepted": true, "quality_score": 0.90, "reasons": [], "metrics": {"...": "..."}}}
-  ],
-  "message": "Face enrollment completed successfully"
+  "enrolled": true,
+  "embedding_id": 0,
+  "detection_score": 0.99,
+  "quality": {"accepted": true, "quality_score": 0.93, "reasons": [], "metrics": {"...": "..."}},
+  "message": "Face enrolled successfully"
 }
 ```
 
-`POST /api/v1/faces/enroll` is the two-image onboarding workflow — `POST /api/v1/enrollment`
-(single image) still exists for adding further embeddings to an already-enrolled identity later.
-The pipeline for each image is `SCRFD -> quality gate -> alignment -> MobileFaceNet -> L2 normalize`;
-nothing is written to FAISS until *both* images have individually passed every check:
+`POST /api/v1/faces/enroll` enrolls one image. The pipeline is
+`SCRFD -> quality gate -> alignment -> MobileFaceNet -> L2 normalize`;
+nothing is written to FAISS until the image has passed every check:
 
-- **Exactly one face per image** — `strict_single_face=True` turns zero faces into
-  `no_face_detected` (422) and more than one into `multiple_faces_detected` (422) for either image.
-- **Quality gate** — each image runs through the same `QualityChecker` used everywhere else (see
+- **Exactly one face** — `strict_single_face=True` turns zero faces into `no_face_detected` (422)
+  and more than one into `multiple_faces_detected` (422).
+- **Quality gate** — the image runs through the same `QualityChecker` used everywhere else (see
   Quality module below); a failing image raises `low_image_quality` (422) with its `reasons`.
-- **Cross-image consistency** — the two resulting embeddings must have cosine similarity ≥
-  `ENROLLMENT_MIN_IMAGE_SIMILARITY` (default `0.40`), or the pair is rejected as
-  `inconsistent_enrollment_images` (422) — this is the "are these actually the same person" check.
 - **Duplicate policy** — `ENROLLMENT_DUPLICATE_POLICY` (default `reject`) rejects re-enrolling an
   `external_id` that already has embeddings with `identity_already_exists` (409). Setting it to
-  `replace` clears the old enrollment instead — but only *after* the new pair has passed every
-  check above, so a rejected re-enrollment attempt never costs the caller their previously valid
-  enrollment.
-- **No partial enrollment** — both embeddings are validated and normalized before either is
-  written to FAISS. The only remaining failure window is the storage step itself (e.g. the second
-  `add_embedding` call failing after the first succeeded); that case is caught explicitly and
-  rolled back by removing whatever was just written, so a failed second write never leaves the
-  identity half-enrolled.
+  `replace` clears the old enrollment only after the new image has passed every check above.
 
 ### Example: main verification endpoint (`/faces/verify`)
 
@@ -248,10 +211,8 @@ curl -X POST http://localhost:8000/api/v1/faces/verify -F "file=@capture.jpg"
 
 Notes on the contract:
 
-- **Exactly one face is required** — unlike `/verification/verify`/`/verification/identify` (which
-  pick the largest face when several are present), this endpoint raises `multiple_faces_detected`
-  (422) for more than one face and `no_face_detected` (422) for zero, since it's the primary
-  attendance-capture path where an ambiguous frame should never be silently resolved.
+- **Exactly one face is required** — this endpoint raises `multiple_faces_detected` (422) for more
+  than one face and `no_face_detected` (422) for zero, since an ambiguous frame is never silently resolved.
 - **`external_id` is echoed back in Mode B regardless of PASS/FAIL** — the caller supplied it
   themselves, so returning it is just confirming what was checked, not asserting a match.
 - **`external_id` is only populated in Mode A on PASS** — a low-confidence best-guess identity is
@@ -264,41 +225,6 @@ Notes on the contract:
   not FAIL — "we have nothing to compare against" is a different failure than "the face didn't match".
 - This endpoint never marks attendance and never writes to HRMS data — it only returns a verdict;
   everything downstream of PASS/FAIL is HRMS's responsibility.
-
-### Example: verify
-
-```bash
-curl -X POST http://localhost:8000/api/v1/verification/verify \
-  -F "external_id=EMP-1024" \
-  -F "file=@capture.jpg"
-```
-
-```json
-{
-  "external_id": "EMP-1024",
-  "verified": true,
-  "result": "PASS",
-  "similarity_score": 0.71,
-  "threshold": 0.36,
-  "detection_score": 0.98,
-  "quality": {
-    "accepted": true,
-    "quality_score": 0.91,
-    "reasons": [],
-    "metrics": {
-      "detection_confidence": 0.98,
-      "face_width": 210,
-      "face_height": 224,
-      "face_area_ratio": 0.18,
-      "brightness": 132.4,
-      "sharpness": 210.7
-    }
-  },
-  "processed_at": "2026-08-17T10:00:00Z"
-}
-```
-
-HRMS treats `result` as the sole verdict and owns everything downstream of it.
 
 ## Multi-frame verification (`/faces/verify-multi`)
 

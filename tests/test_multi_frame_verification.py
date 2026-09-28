@@ -79,7 +79,6 @@ def _service(recognizer, store, **overrides) -> VerificationService:
     defaults = dict(
         verification_threshold=0.80,
         identification_threshold=0.80,
-        identification_top_k=5,
         multi_frame_min_frames=3,
         multi_frame_max_frames=5,
         multi_frame_min_valid_frames=2,

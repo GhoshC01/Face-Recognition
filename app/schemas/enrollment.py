@@ -12,15 +12,3 @@ class EnrollmentResponse(BaseModel):
     detection_score: float
     quality: QualityResultSchema
     message: str = "Face enrolled successfully"
-
-
-class EnrollmentDeleteResponse(BaseModel):
-    external_id: str
-    removed: bool
-    embeddings_removed: int
-
-
-class EnrollmentStatusResponse(BaseModel):
-    external_id: str
-    enrolled: bool
-    embedding_count: int

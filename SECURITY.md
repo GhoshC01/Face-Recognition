@@ -44,8 +44,8 @@ incorrectly.
 
 ## Upload validation
 
-Every file upload across all routes (`/enrollment`, `/faces/enroll`, `/faces/verify`,
-`/faces/verify-multi`, `/verification/*`) is validated by `read_validated_upload`
+Every file upload across all routes (`/faces/enroll`, `/faces/verify`,
+`/faces/verify-multi`, `/faces/compare`, `/faces/compare-embedding`, `/faces/embed`) is validated by `read_validated_upload`
 (`app/api/upload_validation.py`) **before** any image decoding is attempted:
 
 - **Content type** is checked against `ALLOWED_CONTENT_TYPES` (default: `image/jpeg`, `image/png`,
@@ -189,9 +189,9 @@ tighter SLA.
   (`--older-than-days`), using `VectorStore.get_last_enrolled_at()`, and — when image persistence is
   enabled — also removes that identity's `<ENROLLMENT_IMAGES_DIR>/<external_id>/` folder so purged
   identities don't leave photos behind. This service has no automatic expiry on its own — HRMS
-  decides who should remain enrolled (e.g. on offboarding, via
-  `DELETE /api/v1/enrollment/{external_id}`, which also removes that identity's saved photos) — this
-  script exists for periodic, policy-driven cleanup of anything that falls through that process.
+  decides who should remain enrolled. Offboarding removes an identity through
+  `scripts/purge_stale_enrollments.py --delete`, which also removes that identity's saved photos.
+  This script exists for periodic, policy-driven cleanup.
 - **What's genuinely retained**: FAISS vectors, an identity mapping, and (unless disabled) raw
   enrollment photos. Treat all of these as sensitive personal data under whatever regulatory
   framework applies (e.g. GDPR's special-category biometric data, or local equivalents) — this is a

@@ -167,32 +167,10 @@ def test_enroll_initial_saves_photo_when_images_dir_set(store, tmp_path):
     assert (images_dir / "EMP001" / f"{response.embedding_id}.jpg").is_file()
 
 
-def test_enroll_single_image_saves_photo_when_images_dir_set(store, tmp_path):
-    recognizer = ScriptedRecognizer({1: _result(_unit_vector(1))})
-    images_dir = tmp_path / "images"
-    service = EnrollmentService(recognizer, store, images_dir=str(images_dir))
-
-    response = service.enroll("EMP001", make_synthetic_image(1))
-
-    assert (images_dir / "EMP001" / f"{response.embedding_id}.jpg").is_file()
-
-
 def test_no_images_saved_when_images_dir_not_set(store, tmp_path):
     recognizer = ScriptedRecognizer({1: _result(_unit_vector(1))})
     service = EnrollmentService(recognizer, store)  # images_dir defaults to None
 
-    service.enroll("EMP001", make_synthetic_image(1))
+    service.enroll_initial("EMP001", make_synthetic_image(1))
 
     assert not (tmp_path / "images").exists()
-
-
-def test_remove_deletes_saved_photos(store, tmp_path):
-    recognizer = ScriptedRecognizer({1: _result(_unit_vector(1))})
-    images_dir = tmp_path / "images"
-    service = EnrollmentService(recognizer, store, images_dir=str(images_dir))
-    service.enroll("EMP001", make_synthetic_image(1))
-    assert (images_dir / "EMP001").is_dir()
-
-    service.remove("EMP001")
-
-    assert not (images_dir / "EMP001").exists()

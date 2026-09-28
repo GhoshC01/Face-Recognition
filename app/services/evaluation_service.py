@@ -16,7 +16,6 @@ from app.core.quality import QualityChecker, lenient_quality_thresholds
 from app.core.recognizer import FaceEmbeddingResult, FaceRecognizer
 from app.schemas.common import quality_result_to_schema
 from app.schemas.verification import (
-    CompareResponse,
     FaceCompareEmbeddingResponse,
     FaceCompareImageSchema,
     FaceCompareResponse,
@@ -119,26 +118,10 @@ class EvaluationService:
         except _COMPARE_SIDE_ERRORS as exc:
             return None, exc
 
-    def compare(self, image_a, image_b) -> CompareResponse:
-        result_a, error_a = self._process_side(image_a, strict_single_face=False)
-        result_b, error_b = self._process_side(image_b, strict_single_face=False)
-        raise_if_compare_sides_failed(error_a, error_b, label1="file_a", label2="file_b")
-        assert result_a is not None and result_b is not None
-
-        similarity = float(np.dot(result_a.embedding, result_b.embedding))
-        matched = similarity >= self.similarity_threshold
-
-        return CompareResponse(
-            match=matched,
-            result="PASS" if matched else "FAIL",
-            similarity_score=similarity,
-            threshold=self.similarity_threshold,
-        )
-
     def compare_pair(self, image1, image2) -> FaceCompareResponse:
         """Primary two-image compare: exactly one face per image, no storage.
 
-        Same embedding pipeline as `compare()`, but rejects ambiguous frames
+        Rejects ambiguous frames
         (`strict_single_face=True`) and returns Match / Not matching plus a
         confidence score instead of the legacy PASS/FAIL envelope.
 

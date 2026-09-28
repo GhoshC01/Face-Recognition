@@ -33,9 +33,9 @@ def _build_client(monkeypatch, tmp_path, **extra_env: str) -> TestClient:
 
 def test_rejects_unsupported_content_type_over_http(client):
     response = client.post(
-        "/api/v1/enrollment",
+        "/api/v1/faces/enroll",
         data={"external_id": "emp-1"},
-        files={"file": ("probe.txt", b"hello world", "text/plain")},
+        files={"image": ("probe.txt", b"hello world", "text/plain")},
     )
 
     assert response.status_code == 415
@@ -46,9 +46,9 @@ def test_rejects_oversized_upload_over_http(client):
     oversized = b"\x00" * (9 * 1024 * 1024)  # default limit is 8MB
 
     response = client.post(
-        "/api/v1/enrollment",
+        "/api/v1/faces/enroll",
         data={"external_id": "emp-1"},
-        files={"file": ("probe.png", oversized, "image/png")},
+        files={"image": ("probe.png", oversized, "image/png")},
     )
 
     assert response.status_code == 413
@@ -61,9 +61,9 @@ def test_valid_small_image_still_reaches_normal_processing(client):
     image = np.full((64, 64, 3), 128, dtype=np.uint8)
 
     response = client.post(
-        "/api/v1/enrollment",
+        "/api/v1/faces/enroll",
         data={"external_id": "emp-1"},
-        files={"file": ("probe.png", _encode_png(image), "image/png")},
+        files={"image": ("probe.png", _encode_png(image), "image/png")},
     )
 
     assert response.status_code == 503
@@ -74,7 +74,7 @@ def test_valid_small_image_still_reaches_normal_processing(client):
 
 
 def test_cors_headers_absent_by_default(monkeypatch, tmp_path):
-    client = _build_client(monkeypatch, tmp_path)
+    client = _build_client(monkeypatch, tmp_path, CORS_ALLOW_ORIGINS="[]")
     with client:
         response = client.get("/health/live", headers={"Origin": "https://example.com"})
 
@@ -126,9 +126,9 @@ def test_model_path_never_appears_in_error_response(client, tmp_path):
     image = np.full((64, 64, 3), 128, dtype=np.uint8)
 
     response = client.post(
-        "/api/v1/enrollment",
+        "/api/v1/faces/enroll",
         data={"external_id": "emp-1"},
-        files={"file": ("probe.png", _encode_png(image), "image/png")},
+        files={"image": ("probe.png", _encode_png(image), "image/png")},
     )
 
     assert response.status_code == 503

@@ -53,13 +53,12 @@ def test_enroll_then_verify_passes(store, recognizer):
         vector_store=store,
         verification_threshold=0.99,
         identification_threshold=0.99,
-        identification_top_k=5,
     )
 
-    enrollment.enroll("emp-1", make_synthetic_image(marker=7))
-    result = verification.verify("emp-1", make_synthetic_image(marker=7))
+    enrollment.enroll_initial("emp-1", make_synthetic_image(marker=7))
+    result = verification.verify_or_identify(make_synthetic_image(marker=7), external_id="emp-1")
 
-    assert result.result == "PASS"
+    assert result.status == "PASS"
     assert result.verified is True
 
 
@@ -70,13 +69,12 @@ def test_verify_fails_for_different_face(store, recognizer):
         vector_store=store,
         verification_threshold=0.99,
         identification_threshold=0.99,
-        identification_top_k=5,
     )
 
-    enrollment.enroll("emp-1", make_synthetic_image(marker=7))
-    result = verification.verify("emp-1", make_synthetic_image(marker=99))
+    enrollment.enroll_initial("emp-1", make_synthetic_image(marker=7))
+    result = verification.verify_or_identify(make_synthetic_image(marker=99), external_id="emp-1")
 
-    assert result.result == "FAIL"
+    assert result.status == "FAIL"
     assert result.verified is False
 
 
@@ -86,21 +84,10 @@ def test_verify_unknown_identity_raises(store, recognizer):
         vector_store=store,
         verification_threshold=0.99,
         identification_threshold=0.99,
-        identification_top_k=5,
     )
 
     with pytest.raises(IdentityNotFoundError):
-        verification.verify("ghost", make_synthetic_image(marker=1))
-
-
-def test_evaluation_service_compares_two_images_directly(recognizer):
-    evaluation = EvaluationService(recognizer=recognizer, similarity_threshold=0.99)
-
-    same_face = evaluation.compare(make_synthetic_image(7), make_synthetic_image(7))
-    different_face = evaluation.compare(make_synthetic_image(7), make_synthetic_image(42))
-
-    assert same_face.result == "PASS"
-    assert different_face.result == "FAIL"
+        verification.verify_or_identify(make_synthetic_image(marker=1), external_id="ghost")
 
 
 def test_evaluation_service_compare_pair_returns_match_and_confidence(recognizer):
@@ -226,9 +213,3 @@ def test_compare_pair_reports_both_images_when_both_fail():
     assert "image1:" in err.message
     assert "image2:" in err.message
     assert "OK" not in err.message
-
-
-def test_enrollment_remove_unknown_identity_raises(store, recognizer):
-    enrollment = EnrollmentService(recognizer=recognizer, vector_store=store)
-    with pytest.raises(IdentityNotFoundError):
-        enrollment.remove("ghost")

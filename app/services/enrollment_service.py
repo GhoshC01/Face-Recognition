@@ -6,15 +6,11 @@ import os
 import cv2
 import numpy as np
 
-from app.core.exceptions import IdentityAlreadyExistsError, IdentityNotFoundError
+from app.core.exceptions import IdentityAlreadyExistsError
 from app.core.recognizer import FaceRecognizer
 from app.core.vector_store import VectorStore
 from app.schemas.common import quality_result_to_schema
-from app.schemas.enrollment import (
-    EnrollmentDeleteResponse,
-    EnrollmentResponse,
-    EnrollmentStatusResponse,
-)
+from app.schemas.enrollment import EnrollmentResponse
 from app.utils.timing import Stopwatch
 
 logger = logging.getLogger(__name__)
@@ -61,19 +57,6 @@ class EnrollmentService:
                 extra={"external_id": external_id, "embedding_id": embedding_id},
                 exc_info=True,
             )
-
-    def enroll(self, external_id: str, image) -> EnrollmentResponse:
-        result = self.recognizer.process(image, strict_single_face=True)
-        embedding_id = self.vector_store.add_embedding(external_id, result.embedding)
-        self._save_image(external_id, embedding_id, image)
-
-        return EnrollmentResponse(
-            external_id=external_id,
-            enrolled=True,
-            embedding_id=embedding_id,
-            detection_score=result.detection_score,
-            quality=quality_result_to_schema(result.quality),
-        )
 
     def enroll_initial(self, external_id: str, image) -> EnrollmentResponse:
         """Initial enrollment workflow: a single image of the person, required
@@ -122,38 +105,3 @@ class EnrollmentService:
             detection_score=result.detection_score,
             quality=quality_result_to_schema(result.quality),
         )
-
-    def status(self, external_id: str) -> EnrollmentStatusResponse:
-        embeddings = self.vector_store.get_embeddings(external_id)
-        return EnrollmentStatusResponse(
-            external_id=external_id,
-            enrolled=len(embeddings) > 0,
-            embedding_count=len(embeddings),
-        )
-
-    def remove(self, external_id: str) -> EnrollmentDeleteResponse:
-        if not self.vector_store.has_identity(external_id):
-            raise IdentityNotFoundError(f"No enrolled embeddings found for external_id='{external_id}'")
-
-        removed_count = self.vector_store.remove_embedding(external_id)
-        self._remove_images(external_id)
-        return EnrollmentDeleteResponse(
-            external_id=external_id,
-            removed=removed_count > 0,
-            embeddings_removed=removed_count,
-        )
-
-    def _remove_images(self, external_id: str) -> None:
-        """Best-effort cleanup of an identity's saved photos on full removal --
-        never raises, since the FAISS removal above is what actually matters
-        for correctness."""
-        if not self.images_dir:
-            return
-        try:
-            folder = os.path.join(self.images_dir, external_id)
-            if os.path.isdir(folder):
-                for name in os.listdir(folder):
-                    os.remove(os.path.join(folder, name))
-                os.rmdir(folder)
-        except OSError:
-            logger.warning("enrollment_image_cleanup_failed", extra={"external_id": external_id}, exc_info=True)

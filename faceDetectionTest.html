@@ -345,7 +345,7 @@
                 <div class="field">
                     <label for="externalId">External ID</label>
                     <input type="text" id="externalId" placeholder="e.g. EMP001">
-                    <div class="hint">Required for Enroll / Status / Remove. Optional for Capture &
+                    <div class="hint">Required for Enroll. Optional for Capture &
                         Identify — blank = identify across everyone enrolled (Mode A), filled = verify
                         against that one identity (Mode B).</div>
                 </div>
@@ -367,8 +367,6 @@
                 </div>
                 <div class="controls" style="margin-top:10px;">
                     <button class="btn-primary" id="autoBtn" onclick="toggleAutoCapture()" style="display:none;">Auto Capture (5s)</button>
-                    <button class="btn-primary" id="statusBtn" onclick="checkStatus()">Check Status</button>
-                    <button class="btn-danger" id="removeBtn" onclick="removeEnrollment()">Remove Enrollment</button>
                 </div>
             </div>
         </div>
@@ -547,54 +545,6 @@
             if (isAutoCapturing) {
                 captureAndDetect();
                 autoCapturingTimeout = setTimeout(autoCaptureInterval, 5000);
-            }
-        }
-
-        // GET /api/v1/enrollment/{external_id}
-        async function checkStatus() {
-            const externalId = getExternalId();
-            if (!externalId) {
-                showStatus('Enter an External ID first', 'error');
-                return;
-            }
-            try {
-                showStatus('Checking enrollment status...', 'loading');
-                const response = await fetch(apiUrl('/enrollment/' + encodeURIComponent(externalId)));
-                const data = await response.json();
-                if (response.ok) {
-                    showStatus(`"${data.external_id}": ${data.enrolled ? data.embedding_count + ' embedding(s) enrolled' : 'not enrolled'}`, 'success');
-                    displayRaw('Enrollment status', data);
-                } else {
-                    showStatus('Status check failed: ' + describeError(data), 'error');
-                    displayRaw('Status error', data);
-                }
-            } catch (err) {
-                showStatus('Error: ' + err.message, 'error');
-            }
-        }
-
-        // DELETE /api/v1/enrollment/{external_id}
-        async function removeEnrollment() {
-            const externalId = getExternalId();
-            if (!externalId) {
-                showStatus('Enter an External ID first', 'error');
-                return;
-            }
-            try {
-                showStatus('Removing enrollment...', 'loading');
-                const response = await fetch(apiUrl('/enrollment/' + encodeURIComponent(externalId)), {
-                    method: 'DELETE'
-                });
-                const data = await response.json();
-                if (response.ok) {
-                    showStatus(`Removed ${data.embeddings_removed} embedding(s) for "${data.external_id}"`, 'success');
-                    displayRaw('Enrollment removed', data);
-                } else {
-                    showStatus('Remove failed: ' + describeError(data), 'error');
-                    displayRaw('Remove error', data);
-                }
-            } catch (err) {
-                showStatus('Error: ' + err.message, 'error');
             }
         }
 

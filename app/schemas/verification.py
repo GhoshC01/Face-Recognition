@@ -8,37 +8,6 @@ from pydantic import BaseModel, Field
 from app.schemas.common import QualityResultSchema
 
 
-class VerificationResponse(BaseModel):
-    external_id: str
-    verified: bool
-    result: Literal["PASS", "FAIL"]
-    similarity_score: float
-    threshold: float
-    detection_score: float
-    quality: QualityResultSchema
-    processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-class IdentificationMatch(BaseModel):
-    external_id: str
-    similarity_score: float
-
-
-class IdentificationResponse(BaseModel):
-    matches: list[IdentificationMatch]
-    threshold: float
-    detection_score: float
-    processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-class CompareResponse(BaseModel):
-    match: bool
-    result: Literal["PASS", "FAIL"]
-    similarity_score: float
-    threshold: float
-    processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
 class FaceCompareImageSchema(BaseModel):
     detection_score: float
     quality: QualityResultSchema

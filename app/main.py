@@ -115,7 +115,6 @@ async def lifespan(app: FastAPI):
         vector_store=vector_store,
         verification_threshold=settings.verification_similarity_threshold,
         identification_threshold=settings.identification_similarity_threshold,
-        identification_top_k=settings.identification_top_k,
         multi_frame_min_frames=settings.multi_frame_min_frames,
         multi_frame_max_frames=settings.multi_frame_max_frames,
         multi_frame_min_valid_frames=settings.multi_frame_min_valid_frames,

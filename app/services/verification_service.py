@@ -19,10 +19,7 @@ from app.schemas.common import quality_result_to_schema
 from app.schemas.verification import (
     FaceVerificationResponse,
     FrameDiagnostic,
-    IdentificationMatch,
-    IdentificationResponse,
     MultiFrameVerificationResponse,
-    VerificationResponse,
 )
 from app.utils.timing import Stopwatch
 
@@ -57,7 +54,6 @@ class VerificationService:
         vector_store: VectorStore,
         verification_threshold: float,
         identification_threshold: float,
-        identification_top_k: int,
         multi_frame_min_frames: int = 3,
         multi_frame_max_frames: int = 5,
         multi_frame_min_valid_frames: int = 2,
@@ -68,33 +64,11 @@ class VerificationService:
         self.vector_store = vector_store
         self.verification_threshold = verification_threshold
         self.identification_threshold = identification_threshold
-        self.identification_top_k = identification_top_k
         self.multi_frame_min_frames = multi_frame_min_frames
         self.multi_frame_max_frames = multi_frame_max_frames
         self.multi_frame_min_valid_frames = multi_frame_min_valid_frames
         self.multi_frame_min_agreeing_frames = multi_frame_min_agreeing_frames
         self.multi_frame_consensus_ratio = multi_frame_consensus_ratio
-
-    def verify(self, external_id: str, image) -> VerificationResponse:
-        enrolled_embeddings = self.vector_store.get_embeddings(external_id)
-        if not enrolled_embeddings:
-            raise IdentityNotFoundError(f"No enrolled embeddings found for external_id='{external_id}'")
-
-        result = self.recognizer.process(image, strict_single_face=False)
-
-        similarities = [float(np.dot(result.embedding, stored)) for stored in enrolled_embeddings]
-        best_score = max(similarities)
-        verified = best_score >= self.verification_threshold
-
-        return VerificationResponse(
-            external_id=external_id,
-            verified=verified,
-            result="PASS" if verified else "FAIL",
-            similarity_score=best_score,
-            threshold=self.verification_threshold,
-            detection_score=result.detection_score,
-            quality=quality_result_to_schema(result.quality),
-        )
 
     def verify_or_identify(self, image, external_id: str | None = None) -> FaceVerificationResponse:
         """The main HRMS-facing endpoint's logic: POST /api/v1/faces/verify.
@@ -355,20 +329,4 @@ class VerificationService:
             required_consensus_ratio=self.multi_frame_consensus_ratio,
             reasons=reasons,
             frames=frame_diagnostics,
-        )
-
-    def identify(self, image, top_k: int | None = None) -> IdentificationResponse:
-        result = self.recognizer.process(image, strict_single_face=False)
-        candidates = self.vector_store.search(result.embedding, top_k=top_k or self.identification_top_k)
-
-        matches = [
-            IdentificationMatch(external_id=c.external_id, similarity_score=c.similarity_score)
-            for c in candidates
-            if c.similarity_score >= self.identification_threshold
-        ]
-
-        return IdentificationResponse(
-            matches=matches,
-            threshold=self.identification_threshold,
-            detection_score=result.detection_score,
         )
