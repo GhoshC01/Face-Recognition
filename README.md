@@ -37,7 +37,7 @@ app/
 │   └── routes/
 │       ├── health.py           # unversioned /health/live, /health/ready
 │       └── v1/
-│           └── faces.py        # /api/v1/faces/enroll, /verify, /verify-multi, /compare, /compare-embedding, /embed
+│           └── faces.py        # /api/v1/faces/compare-embedding
 ├── core/
 │   ├── detector.py              # SCRFD ONNX face detector -> boxes + 5-point landmarks
 │   ├── alignment.py              # 5-point similarity-transform warp to a configurable, model-sized crop
@@ -93,12 +93,7 @@ Without the ONNX model files present, the service still starts: `/health/live` r
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/faces/enroll` (form: `external_id`, `image`) | Enroll one face image for an identity |
-| POST | `/faces/verify` (form: `file`, optional `external_id`) | Mode B (1:1) if `external_id` given, Mode A (1:N identify) if omitted |
-| POST | `/faces/verify-multi` (form: `files[]`, optional `external_id`, `debug`) | Multi-frame verification for webcam capture |
-| POST | `/faces/compare` (files or URLs) | Stateless 1:1 compare of two images |
-| POST | `/faces/compare-embedding` (form: `embedding`, `image`) | Stateless compare of one image against a supplied embedding |
-| POST | `/faces/embed` (form: `images[]` or `image_urls[]`) | Stateless embedding extraction |
+| POST | `/faces/compare-embedding` (form: `embedding`, `image`) | Compare one image against a supplied embedding. Returns `matched`, `status` (`Match` / `Not matching`), `confidence`, `threshold`, and image quality. Nothing is stored. |
 
 Unversioned, for infra probes:
 
@@ -109,187 +104,15 @@ Unversioned, for infra probes:
 
 Interactive docs: `http://localhost:8000/docs`.
 
-### Example: extract embeddings (`/faces/embed`)
-
-Stateless: images in, L2-normalized vectors out. Nothing is enrolled or written to FAISS.
+### Example: compare an embedding (`/faces/compare-embedding`)
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/faces/embed \
-  -F "images=@front.jpg" \
-  -F "images=@angle.jpg"
+curl -X POST http://localhost:8000/api/v1/faces/compare-embedding \
+  -F "embedding=$(cat embedding.json)" \
+  -F "image=@capture.jpg"
 ```
 
-Remote URLs work the same way (`image_urls` instead of `images`, not both):
-
-```bash
-curl -X POST http://localhost:8000/api/v1/faces/embed \
-  -F "image_urls=https://example.com/a.jpg" \
-  -F "image_urls=https://example.com/b.jpg"
-```
-
-- **1 image** — returns that embedding. No same-face check.
-- **2+ images** — every later image is compared against the first (cosine similarity ≥ `EMBED_CONSISTENCY_THRESHOLD`, default `0.40`). One mismatch returns `inconsistent_images` (422) and **no** embeddings.
-- Each image must contain exactly one face and pass the same quality gate as enroll/verify.
-- At most `EMBED_MAX_IMAGES` (default 10) images per request.
-
-### Example: enrollment (`/faces/enroll`)
-
-```bash
-curl -X POST http://localhost:8000/api/v1/faces/enroll \
-  -F "external_id=EMP001" \
-  -F "image=@front.jpg"
-```
-
-```json
-{
-  "external_id": "EMP001",
-  "enrolled": true,
-  "embedding_id": 0,
-  "detection_score": 0.99,
-  "quality": {"accepted": true, "quality_score": 0.93, "reasons": [], "metrics": {"...": "..."}},
-  "message": "Face enrolled successfully"
-}
-```
-
-`POST /api/v1/faces/enroll` enrolls one image. The pipeline is
-`SCRFD -> quality gate -> alignment -> MobileFaceNet -> L2 normalize`;
-nothing is written to FAISS until the image has passed every check:
-
-- **Exactly one face** — `strict_single_face=True` turns zero faces into `no_face_detected` (422)
-  and more than one into `multiple_faces_detected` (422).
-- **Quality gate** — the image runs through the same `QualityChecker` used everywhere else (see
-  Quality module below); a failing image raises `low_image_quality` (422) with its `reasons`.
-- **Duplicate policy** — `ENROLLMENT_DUPLICATE_POLICY` (default `reject`) rejects re-enrolling an
-  `external_id` that already has embeddings with `identity_already_exists` (409). Setting it to
-  `replace` clears the old enrollment only after the new image has passed every check above.
-
-### Example: main verification endpoint (`/faces/verify`)
-
-This is the endpoint HRMS calls at attendance-capture time. It always runs the same pipeline —
-`SCRFD (exactly one face required) -> quality gate -> alignment -> MobileFaceNet -> L2 normalize`
-— then branches on whether `external_id` was supplied:
-
-```bash
-# Mode B: verify against a specific, claimed identity
-curl -X POST http://localhost:8000/api/v1/faces/verify \
-  -F "external_id=EMP001" \
-  -F "file=@capture.jpg"
-```
-
-```json
-{
-  "verified": true,
-  "status": "PASS",
-  "external_id": "EMP001",
-  "similarity": 0.91,
-  "threshold": 0.85,
-  "mode": "verification",
-  "detection_score": 0.98,
-  "quality": {"...": "..."},
-  "processed_at": "2026-08-17T10:00:00Z"
-}
-```
-
-```bash
-# Mode A: no claimed identity -- identify the best match across everyone enrolled
-curl -X POST http://localhost:8000/api/v1/faces/verify -F "file=@capture.jpg"
-```
-
-```json
-{
-  "verified": false,
-  "status": "FAIL",
-  "external_id": null,
-  "similarity": 0.62,
-  "threshold": 0.85,
-  "mode": "identification",
-  "detection_score": 0.97,
-  "quality": {"...": "..."},
-  "processed_at": "2026-08-17T10:00:00Z"
-}
-```
-
-Notes on the contract:
-
-- **Exactly one face is required** — this endpoint raises `multiple_faces_detected` (422) for more
-  than one face and `no_face_detected` (422) for zero, since an ambiguous frame is never silently resolved.
-- **`external_id` is echoed back in Mode B regardless of PASS/FAIL** — the caller supplied it
-  themselves, so returning it is just confirming what was checked, not asserting a match.
-- **`external_id` is only populated in Mode A on PASS** — a low-confidence best-guess identity is
-  never surfaced when the score doesn't clear the threshold; a FAIL always carries `external_id: null`.
-- **The nearest candidate is never forced to PASS.** Both modes compare a real similarity score
-  against a real configured threshold (`VERIFICATION_SIMILARITY_THRESHOLD` for Mode B,
-  `IDENTIFICATION_SIMILARITY_THRESHOLD` for Mode A); an empty vector store or an unrelated face
-  always resolves to FAIL, never to whatever happened to be closest.
-- Mode B against an `external_id` with no enrolled embeddings returns `identity_not_found` (404),
-  not FAIL — "we have nothing to compare against" is a different failure than "the face didn't match".
-- This endpoint never marks attendance and never writes to HRMS data — it only returns a verdict;
-  everything downstream of PASS/FAIL is HRMS's responsibility.
-
-## Multi-frame verification (`/faces/verify-multi`)
-
-Optional, for webcam-based attendance capture: instead of trusting one frame, HRMS submits several
-(configurable, default 3–5) frames captured in quick succession, and this endpoint only PASSes
-when enough of them independently agree — reducing false recognition caused by any single blurry,
-partially occluded, or otherwise poor-quality frame.
-
-```bash
-curl -X POST http://localhost:8000/api/v1/faces/verify-multi \
-  -F "external_id=EMP001" \
-  -F "files=@frame1.jpg" -F "files=@frame2.jpg" -F "files=@frame3.jpg"
-```
-
-```json
-{
-  "verified": true,
-  "status": "PASS",
-  "external_id": "EMP001",
-  "similarity": 0.91,
-  "threshold": 0.85,
-  "mode": "verification",
-  "frames_submitted": 3,
-  "frames_valid": 3,
-  "frames_agreeing": 3,
-  "consensus_ratio": 1.0,
-  "required_consensus_ratio": 0.6,
-  "reasons": [],
-  "frames": null,
-  "processed_at": "2026-08-17T10:00:00Z"
-}
-```
-
-Add `-F "debug=true"` to get per-frame diagnostics instead of `"frames": null`:
-
-```json
-"frames": [
-  {"frame_index": 0, "valid": true, "external_id": "EMP001", "similarity": 0.91, "passed_threshold": true, "detection_score": 0.98, "quality": {"...": "..."}, "rejection_reason": null},
-  {"frame_index": 1, "valid": true, "external_id": "EMP001", "similarity": 0.89, "passed_threshold": true, "detection_score": 0.97, "quality": {"...": "..."}, "rejection_reason": null},
-  {"frame_index": 2, "valid": true, "external_id": "EMP001", "similarity": 0.93, "passed_threshold": true, "detection_score": 0.99, "quality": {"...": "..."}, "rejection_reason": null}
-]
-```
-
-How the verdict is decided (`app/services/verification_service.py::verify_multi_frame`):
-
-1. **Each frame runs the same single-face pipeline independently** (`strict_single_face=True`).
-   A frame that fails to decode, has no/multiple faces, or fails the quality gate is marked
-   invalid with a `rejection_reason` (its own `error_code`) and simply excluded — it never fails
-   the whole request.
-2. **Not enough valid frames → FAIL, reason `insufficient_valid_frames`.** Configurable via
-   `MULTI_FRAME_MIN_VALID_FRAMES` (default 2) — a request can't be salvaged from too few usable
-   frames no matter how good they are.
-3. **Identity consistency**: among the valid frames, whichever identity was the top match most
-   often is the "leading candidate" (Mode B: this is always the claimed `external_id`; Mode A:
-   different frames could in principle point at different people).
-4. **Threshold agreement**: of the leading candidate's frames, count how many *also* individually
-   cleared the similarity threshold (`frames_agreeing`), as a fraction of all valid frames
-   (`consensus_ratio`).
-5. **PASS requires both conditions plus an absolute floor**:
-   `frames_agreeing >= MULTI_FRAME_MIN_AGREEING_FRAMES` (default 2) **and**
-   `consensus_ratio >= MULTI_FRAME_CONSENSUS_RATIO` (default 0.6). The absolute floor exists
-   specifically so **one strong (or lucky) frame can never carry a PASS by itself** — even a
-   single frame with 100% "agreement" (1 out of 1) fails the floor check.
-6. Like the single-frame endpoint: `external_id` is always echoed in Mode B (PASS or FAIL) and
-   only populated in Mode A on PASS; the closest available candidate is never forced to PASS.
+`embedding` is a JSON array of floats (or the same JSON as `0x`-prefixed hex). `image` must contain exactly one face. The response shape is unchanged: `matched`, `status` (`Match` or `Not matching`), `confidence`, `threshold`, `image` (detection score and quality), and `processed_at`.
 
 ## Quality module
 

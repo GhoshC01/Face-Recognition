@@ -33,8 +33,8 @@ def _build_client(monkeypatch, tmp_path, **extra_env: str) -> TestClient:
 
 def test_rejects_unsupported_content_type_over_http(client):
     response = client.post(
-        "/api/v1/faces/enroll",
-        data={"external_id": "emp-1"},
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": "[0.1]"},
         files={"image": ("probe.txt", b"hello world", "text/plain")},
     )
 
@@ -46,8 +46,8 @@ def test_rejects_oversized_upload_over_http(client):
     oversized = b"\x00" * (9 * 1024 * 1024)  # default limit is 8MB
 
     response = client.post(
-        "/api/v1/faces/enroll",
-        data={"external_id": "emp-1"},
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": "[0.1]"},
         files={"image": ("probe.png", oversized, "image/png")},
     )
 
@@ -60,9 +60,12 @@ def test_valid_small_image_still_reaches_normal_processing(client):
     # and fail downstream with model_not_ready, not a validation error.
     image = np.full((64, 64, 3), 128, dtype=np.uint8)
 
+    dimension = client.app.state.settings.embedding_dimension
+    vector = [0.0] * dimension
+    vector[0] = 1.0
     response = client.post(
-        "/api/v1/faces/enroll",
-        data={"external_id": "emp-1"},
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": json.dumps(vector)},
         files={"image": ("probe.png", _encode_png(image), "image/png")},
     )
 
@@ -125,9 +128,12 @@ def test_rate_limit_does_not_apply_when_disabled(monkeypatch, tmp_path):
 def test_model_path_never_appears_in_error_response(client, tmp_path):
     image = np.full((64, 64, 3), 128, dtype=np.uint8)
 
+    dimension = client.app.state.settings.embedding_dimension
+    vector = [0.0] * dimension
+    vector[0] = 1.0
     response = client.post(
-        "/api/v1/faces/enroll",
-        data={"external_id": "emp-1"},
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": json.dumps(vector)},
         files={"image": ("probe.png", _encode_png(image), "image/png")},
     )
 

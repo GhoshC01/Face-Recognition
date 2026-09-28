@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import cv2
 import numpy as np
 
@@ -10,10 +12,17 @@ def _encode_png(image: np.ndarray) -> bytes:
     return buffer.tobytes()
 
 
-def test_enroll_invalid_image_returns_400(client):
+def _embedding(client) -> str:
+    dimension = client.app.state.settings.embedding_dimension
+    vector = [0.0] * dimension
+    vector[0] = 1.0
+    return json.dumps(vector)
+
+
+def test_compare_embedding_invalid_image_returns_400(client):
     response = client.post(
-        "/api/v1/faces/enroll",
-        data={"external_id": "emp-1"},
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": _embedding(client)},
         files={"image": ("a.png", b"not-an-image", "image/png")},
     )
 
@@ -21,111 +30,23 @@ def test_enroll_invalid_image_returns_400(client):
     assert response.json()["error_code"] == "invalid_image"
 
 
-def test_faces_enroll_without_models_returns_service_unavailable(client):
+def test_compare_embedding_without_models_returns_service_unavailable(client):
     image = np.full((64, 64, 3), 128, dtype=np.uint8)
-    png_bytes = _encode_png(image)
 
     response = client.post(
-        "/api/v1/faces/enroll",
-        data={"external_id": "EMP001"},
-        files={"image": ("a.png", png_bytes, "image/png")},
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": _embedding(client)},
+        files={"image": ("a.png", _encode_png(image), "image/png")},
     )
 
     assert response.status_code == 503
     assert response.json()["error_code"] == "model_not_ready"
 
 
-def test_faces_enroll_requires_image(client):
+def test_compare_embedding_requires_image(client):
     response = client.post(
-        "/api/v1/faces/enroll",
-        data={"external_id": "EMP001"},
+        "/api/v1/faces/compare-embedding",
+        data={"embedding": _embedding(client)},
     )
 
-    assert response.status_code == 422  # FastAPI request validation: image is required
-
-
-def test_faces_verify_multi_without_models_returns_service_unavailable(client):
-    image = np.full((64, 64, 3), 128, dtype=np.uint8)
-    png_bytes = _encode_png(image)
-
-    # Mode A (no external_id): unlike Mode B, there's no identity lookup to
-    # fail fast on, so this actually reaches the recognizer and surfaces the
-    # missing-model condition.
-    response = client.post(
-        "/api/v1/faces/verify-multi",
-        files=[
-            ("files", ("a.png", png_bytes, "image/png")),
-            ("files", ("b.png", png_bytes, "image/png")),
-            ("files", ("c.png", png_bytes, "image/png")),
-        ],
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error_code"] == "model_not_ready"
-
-
-def test_faces_compare_without_models_returns_service_unavailable(client):
-    image = np.full((64, 64, 3), 128, dtype=np.uint8)
-    png_bytes = _encode_png(image)
-
-    response = client.post(
-        "/api/v1/faces/compare",
-        files={
-            "image1": ("a.png", png_bytes, "image/png"),
-            "image2": ("b.png", png_bytes, "image/png"),
-        },
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error_code"] == "model_not_ready"
-
-
-def test_faces_compare_file_and_url_together_returns_400(client):
-    image = np.full((64, 64, 3), 128, dtype=np.uint8)
-    png_bytes = _encode_png(image)
-
-    response = client.post(
-        "/api/v1/faces/compare",
-        data={"image1_url": "https://my-bucket.s3.amazonaws.com/a.jpg"},
-        files={
-            "image1": ("a.png", png_bytes, "image/png"),
-            "image2": ("b.png", png_bytes, "image/png"),
-        },
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "invalid_image_source"
-
-
-def test_faces_embed_without_models_returns_service_unavailable(client):
-    image = np.full((64, 64, 3), 128, dtype=np.uint8)
-    png_bytes = _encode_png(image)
-
-    response = client.post(
-        "/api/v1/faces/embed",
-        files={"images": ("a.png", png_bytes, "image/png")},
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error_code"] == "model_not_ready"
-
-
-def test_faces_embed_missing_images_returns_400(client):
-    response = client.post("/api/v1/faces/embed")
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "invalid_image_source"
-
-
-def test_faces_verify_multi_rejects_too_few_frames(client):
-    image = np.full((64, 64, 3), 128, dtype=np.uint8)
-    png_bytes = _encode_png(image)
-
-    response = client.post(
-        "/api/v1/faces/verify-multi",
-        data={"external_id": "EMP001"},
-        files=[("files", ("a.png", png_bytes, "image/png"))],
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "invalid_frame_count"
+    assert response.status_code == 422

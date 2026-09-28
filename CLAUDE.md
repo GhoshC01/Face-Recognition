@@ -126,11 +126,8 @@ Image decode করার **আগে** HTTP-লেভেলে চেক কর
 ### `app/api/routes/health.py`
 `/health/live` (সবসময় 200, process বেঁচে আছে কিনা) আর `/health/ready` (detector+embedder loaded + vector store ready — নাহলে 503)। Docker `HEALTHCHECK` আর k8s readiness probe এটাই ব্যবহার করে।
 
-### `app/api/routes/v1/faces.py` — **মূল ইউজার-ফেসিং endpoints**
-- `POST /faces/enroll` — একটা ছবি (`image`) + `external_id`। exactly একটা face, quality gate পাস করতে হবে।
-- `POST /faces/verify` — `external_id` দিলে Mode B (1:1 verify), না দিলে Mode A (1:N identify)। **exactly একটা face লাগবে** (একাধিক face পেলে 422)।
-- `POST /faces/verify-multi` — webcam multi-frame consensus verification।
-- `POST /faces/compare`, `POST /faces/compare-embedding`, `POST /faces/embed` — stateless; FAISS-এ লেখে না।
+### `app/api/routes/v1/faces.py` — **একমাত্র ফেস endpoint**
+- `POST /faces/compare-embedding` — একটা embedding আর একটা ছবি। Response: `matched`, `status` (`Match` / `Not matching`), `confidence`, `threshold`, `image`। কিছু সেভ হয় না।
 
 `faces.py`-এর endpoint গুলো `strict_single_face=True` ব্যবহার করে (ambiguous frame কখনো silently resolve করা যাবে না, যেহেতু এটাই primary attendance-capture path)। HTTP API শুধু `/api/v1/faces` — আলাদা `/enrollment` বা `/verification` রাউট নেই।
 

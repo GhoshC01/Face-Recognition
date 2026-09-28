@@ -61,8 +61,7 @@ scratch (barring anything identified in section 8).
 
 | Use case | Method & path | Notes |
 |---|---|---|
-| Enroll a face | `POST /api/v1/faces/enroll` | One image, opaque `external_id`. |
-| **Attendance-time verification (primary)** | `POST /api/v1/faces/verify` | The endpoint HRMS is expected to call at attendance-capture time. Supports both identity-known and identity-unknown flows in one call. |
+| Compare a stored embedding to a capture | `POST /api/v1/faces/compare-embedding` | HRMS sends the embedding it already stored, plus one image. Response is `matched`, `status` (`Match` / `Not matching`), `confidence`, `threshold`, and image quality. Nothing is stored here. |
 | Remove a stale enrollment | `scripts/purge_stale_enrollments.py --delete` | Operator cleanup when an identity should no longer be enrolled. There is no HTTP delete route. |
 | Liveness / readiness | `GET /health/live`, `GET /health/ready` | For HRMS's own health-check/monitoring wiring, and for confirming the service is ready (models loaded) before routing real traffic to it. |
 

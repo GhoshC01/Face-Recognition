@@ -44,8 +44,7 @@ incorrectly.
 
 ## Upload validation
 
-Every file upload across all routes (`/faces/enroll`, `/faces/verify`,
-`/faces/verify-multi`, `/faces/compare`, `/faces/compare-embedding`, `/faces/embed`) is validated by `read_validated_upload`
+The file upload on `/faces/compare-embedding` is validated by `read_validated_upload`
 (`app/api/upload_validation.py`) **before** any image decoding is attempted:
 
 - **Content type** is checked against `ALLOWED_CONTENT_TYPES` (default: `image/jpeg`, `image/png`,
@@ -55,9 +54,6 @@ Every file upload across all routes (`/faces/enroll`, `/faces/verify`,
   since a client can misreport the former.
 - **Malformed content** that passes both checks but isn't decodable as an image is rejected by
   `decode_image_bytes` with `400 invalid_image`.
-
-In `/faces/verify-multi`, an individual bad frame (wrong type, oversized, or corrupt) is treated
-the same as any other invalid frame — it's excluded, not fatal to the whole request.
 
 **Deployment note**: application-level size checking happens after the body has already been
 received and buffered by the ASGI server's multipart parser — it prevents *processing* an
